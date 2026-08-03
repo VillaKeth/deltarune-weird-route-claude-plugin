@@ -15,8 +15,12 @@ import { tmpdir } from "node:os";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GATE = join(HERE, "..", "hooks", "gate.mjs");
-const STATE_DIR = join(HERE, "..", "state");
 const FIXTURE = join(HERE, "fixtures", "fake-renderer.mjs");
+
+// A temp directory, not the repo's real state/. These tests used to write
+// session files alongside live ones and leave them behind, and a test id could
+// in principle collide with a real session id.
+const STATE_DIR = join(tmpdir(), `weird-gate-state-${process.pid}`);
 
 // The override args are JSON precisely because FIXTURE's absolute path contains
 // spaces on any normal checkout of this project.
@@ -39,7 +43,7 @@ const stateOf = async (id) => {
 const run = (payload, env = {}) =>
   new Promise((resolve) => {
     const child = spawn(process.execPath, [GATE], {
-      env: { ...process.env, ...env },
+      env: { ...process.env, WEIRD_ROUTE_STATE_DIR: STATE_DIR, ...env },
       stdio: ["pipe", "pipe", "pipe"],
     });
     let out = "", err = "";

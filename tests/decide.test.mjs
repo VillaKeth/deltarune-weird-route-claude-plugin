@@ -45,7 +45,9 @@ test("proceeding at the limit resets the counter", async () => {
 test("the completion box ends the route and does not block", async () => {
   const { output, nextState } = await decide(
     { hook_event_name: "Stop", next: null }, active, proceed);
-  assert.equal(output.decision, undefined);
+  // deepEqual, not `.decision === undefined` — that also passes for
+  // { decision: undefined }, and for an output carrying some other key.
+  assert.deepEqual(output, {});
   assert.equal(nextState.routeActive, false);
 });
 
@@ -97,7 +99,7 @@ test("refusing at the ceiling ends the route and does not block", async () => {
   const { output, nextState } = await decide(
     { hook_event_name: "Stop", next: "keep going" },
     { routeActive: true, autoContinues: 25 }, refuse);
-  assert.equal(output.decision, undefined, "a refusal must never block-and-continue");
+  assert.deepEqual(output, {}, "a refusal must never block-and-continue");
   assert.equal(nextState.routeActive, false);
 });
 

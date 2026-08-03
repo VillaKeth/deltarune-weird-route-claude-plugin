@@ -28,6 +28,16 @@ const parseArgs = (raw) => {
   return raw.split(" ").filter(Boolean);
 };
 
+// process.exit() does not flush stdout when it is an async pipe, and a dropped
+// decision is a dropped deny. The timer means a callback that never fires
+// cannot wedge the hook either.
+const flush = (text) =>
+  new Promise((resolve) => {
+    const timer = setTimeout(resolve, 1000);
+    const done = () => { clearTimeout(timer); resolve(); };
+    try { process.stdout.write(text, done); } catch { done(); }
+  });
+
 // The whole read is guarded, not just the parse: a stream "error" during
 // iteration (pipe reset, abnormal parent teardown) throws outside any JSON
 // concern, and an uncaught throw here crashes the hook before a decision
@@ -85,7 +95,7 @@ if (!payload || typeof payload !== "object") {
   // config is an allow — the fail-open this module exists to prevent. A
   // PreToolUse-shaped deny is ignored by Claude Code for any other event, so
   // emitting it costs nothing and closes the one case that matters.
-  process.stdout.write(JSON.stringify(deny()));
+  await flush(JSON.stringify(deny()));
   process.exit(0);
 }
 
@@ -135,7 +145,7 @@ if (isBlock) {
   }
 }
 
-if (Object.keys(output).length) process.stdout.write(JSON.stringify(output));
+if (Object.keys(output).length) await flush(JSON.stringify(output));
 
 if (!isBlock) {
   try {

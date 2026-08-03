@@ -8,8 +8,13 @@ const job = { kind: "gate", face: "trance", lines: ["* hi"], options: ["Proceed"
 const run = (mode, timeoutMs) =>
   askUser(job, { command: process.execPath, args: [FAKE, mode], timeoutMs });
 
-test("the timeout default is 120 seconds", () => {
-  assert.equal(RENDER_TIMEOUT_MS, 120_000);
+test("the default timeout is long enough for a human and short enough to be a bound", () => {
+  // Asserting the constant equals its own literal proves nothing. What matters
+  // is the relationship: long enough that a person reading a path is not
+  // timed out, and finite so a hung renderer cannot wedge the hook forever.
+  assert.ok(RENDER_TIMEOUT_MS >= 30_000, "too short to answer a real prompt");
+  assert.ok(Number.isFinite(RENDER_TIMEOUT_MS) && RENDER_TIMEOUT_MS <= 180_000,
+    "must stay under the hook timeout declared in .claude/settings.json");
 });
 
 test("a proceed answer comes back as proceed", async () => {

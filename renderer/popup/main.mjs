@@ -8,17 +8,17 @@
 // it loads can import src/ or be reached by node --test. Keeping the rules in
 // src/nav.mjs and driving them from here makes the whole interaction testable
 // and leaves the page a dumb painter.
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, screen } from "electron";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { writeFile, access } from "node:fs/promises";
 import { readSync } from "node:fs";
-import { BOX, rowY } from "../../src/geometry.mjs";
-import { keyAction, totalChars, CRAWL_MS, OPTION_X } from "../../src/nav.mjs";
+import { BOX, rowY, OPTION_X, faceOffset } from "../../src/geometry.mjs";
+import { keyAction, totalChars, CRAWL_MS } from "../../src/nav.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ASSETS = join(HERE, "..", "..", "assets");
-const SCALE = 3;
+const SCALE = BOX.scale;
 
 // Test-only capture mode. Also reveals the text instantly — a capture taken
 // while the typewriter is still crawling would assert against a half-drawn row.
@@ -38,8 +38,18 @@ let answered = false;
 const answer = (choice) => {
   if (answered) return;
   answered = true;
-  process.stdout.write(JSON.stringify({ choice }));
-  app.exit(0);
+  // exit() does not flush stdout when it is an async pipe, which it is on
+  // POSIX. Dropping the write costs a real Proceed: the parent parses "" and
+  // refuses. Exit only once the bytes are away, with a timer so a callback
+  // that never fires cannot hang the window open either.
+  let done = false;
+  const quit = () => { if (!done) { done = true; app.exit(0); } };
+  setTimeout(quit, 1000);
+  try {
+    process.stdout.write(JSON.stringify({ choice }), quit);
+  } catch {
+    quit();
+  }
 };
 
 // Hard failsafe: force-closes and refuses no matter what this process is
@@ -117,16 +127,40 @@ try {
   return answer("refuse");
 }
 
+// Claude Code can gate two tool calls from one assistant block, producing two
+// boxes at once. Centred identically they stack exactly, and only the focused
+// one receives before-input-event — the other cannot be answered, moved, or
+// alt-tabbed to (frameless, skipTaskbar) and just covers the screen until its
+// failsafe. A deterministic cascade keeps every window reachable. The box is
+// also draggable, so one can always be pulled aside.
+const W = BOX.width * SCALE;
+const H = BOX.height * SCALE;
+const area = screen.getPrimaryDisplay().workAreaSize;
+const step = (process.pid % 6) * 28;
+
+// Dead centre is the game-accurate placement, but it lands on top of whatever
+// you are working on. WEIRD_ROUTE_POS moves it out of the way.
+const MARGIN = 24;
+const PLACES = {
+  center: [Math.round((area.width - W) / 2), Math.round((area.height - H) / 2)],
+  "top-left": [MARGIN, MARGIN],
+  "top-right": [area.width - W - MARGIN, MARGIN],
+  "bottom-left": [MARGIN, area.height - H - MARGIN],
+  "bottom-right": [area.width - W - MARGIN, area.height - H - MARGIN],
+};
+const [baseX, baseY] = PLACES[process.env.WEIRD_ROUTE_POS] ?? PLACES.center;
+
 const win = new BrowserWindow({
-  width: BOX.width * SCALE,
-  height: BOX.height * SCALE,
+  width: W,
+  height: H,
+  x: Math.max(0, baseX + step),
+  y: Math.max(0, baseY + step),
   frame: false,
   transparent: true,
   backgroundColor: "#00000000",   // Windows needs this explicitly with transparent
   alwaysOnTop: true,
   resizable: false,
   skipTaskbar: true,
-  center: true,
   show: false,                    // reveal only once painted, so no white flash
   webPreferences: { preload: join(HERE, "preload.cjs"), contextIsolation: true },
 });
@@ -200,6 +234,7 @@ ipcMain.on("job:request", (e) =>
     box: BOX,
     rows: [rowY(0), rowY(1), rowY(2)],
     optionX: OPTION_X,
+    faceOffset,
     state: { revealed, beat: state.beat, cursor: state.cursor },
   }));
 
@@ -208,7 +243,10 @@ ipcMain.on("job:request", (e) =>
 // UnknownVizError and the process sat for the full failsafe with nothing but
 // an UnhandledPromiseRejectionWarning on stderr.
 ipcMain.on("ready", async () => {
-  win.show();
+  // Automated runs keep the window hidden. It still renders, still receives
+  // input events, still captures — it just does not flash over whatever the
+  // user is doing every time the suite runs.
+  if (!process.env.WEIRD_ROUTE_KEYS && !CAPTURE) win.show();
   if (job.sfx === "start") play("ui_spooky_action.wav");
   startCrawl();
 

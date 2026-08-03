@@ -1,4 +1,4 @@
-import { wrapLines, MAX_ROWS } from "./geometry.mjs";
+import { wrapLines, MAX_ROWS, MAX_CHARS, BOX, innerRight } from "./geometry.mjs";
 import { atLimit } from "./state.mjs";
 
 export const CONSEQUENTIAL_TOOLS = ["Write", "Edit", "Bash", "WebFetch", "Task"];
@@ -15,8 +15,27 @@ export const ROUTE_TRIGGER = /(?:^\s*\/?weird[-\s]?route\b)|(?:\bweird route\b)/
 export const isRouteTrigger = (prompt) =>
   typeof prompt === "string" && ROUTE_TRIGGER.test(prompt);
 
-const basename = (p = "") => String(p).split(/[\\/]/).pop() || String(p);
+// Two indented continuation rows' worth of characters.
+const DETAIL_BUDGET = (MAX_CHARS.withPortrait - 2) * 2;
 
+// A path's identity is at its END — basename alone made
+// C:\Windows\System32\drivers\etc\hosts and ./notes/hosts render identically.
+const tail = (value, budget = DETAIL_BUDGET) => {
+  const s = String(value ?? "").replace(/\\/g, "/").trim();
+  if (!s) return "(nothing)";
+  return s.length <= budget ? s : `…${s.slice(-(budget - 1))}`;
+};
+
+// A command's identity is at its START.
+const head = (value, budget = DETAIL_BUDGET) => {
+  const s = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!s) return "(nothing)";
+  return s.length <= budget ? s : `${s.slice(0, budget - 1)}…`;
+};
+
+// Returns the rows Noelle speaks: a verb, then the specific thing. The box is
+// asking for informed consent, so it must name what it is approving — "it wants
+// to run a command" told the user nothing at all.
 export function describeTool(toolName, toolInput) {
   // A default parameter only fires for undefined, never for an explicit null.
   // Hook payloads are external input, and this module sits on the fail-closed
@@ -24,20 +43,33 @@ export function describeTool(toolName, toolInput) {
   // the tool call through unsupervised — the exact inversion of the invariant.
   const input = toolInput && typeof toolInput === "object" ? toolInput : {};
   switch (toolName) {
-    case "Write":  return `* it wants to write ${basename(input.file_path)}.`;
-    case "Edit":   return `* it wants to change ${basename(input.file_path)}.`;
-    case "Bash":   return `* it wants to run a command.`;
-    case "WebFetch": return `* it wants to reach the outside.`;
-    case "Task":   return `* it wants to send someone else.`;
-    default:       return `* it wants to use ${toolName}.`;
+    case "Write":    return ["* it wants to write", tail(input.file_path)];
+    case "Edit":     return ["* it wants to change", tail(input.file_path)];
+    case "Bash":     return ["* it wants to run", head(input.command)];
+    case "WebFetch": return ["* it wants to reach", tail(input.url)];
+    case "Task":     return ["* it wants to send someone", head(input.description ?? input.prompt)];
+    default:         return [`* it wants to use ${String(toolName ?? "something")}.`];
   }
 }
 
 // Noelle's lines are wrapped and then hard-truncated to the three rows the box
 // holds. Truncation is deliberate: an overlong tool description must never push
 // the choice row out of the box.
+// The spec requires that no run pass the inner right edge. Enforced here, where
+// the rows are built, rather than in the renderer — but by CLAMPING, never by
+// throwing. assertFits throws, and a throw inside buildJob crashes the hook,
+// and a crashed PreToolUse hook lets the tool call through: enforcing the
+// cosmetic rule must not break the safety one. The clamp is unreachable while
+// wrapLines is correct; it exists so that a future bug there is a short line
+// rather than an open gate.
+const clamp = (row) => {
+  const x = BOX.textX.withPortrait + (row.startsWith("*") ? BOX.asteriskOffset : 0);
+  const room = Math.max(0, Math.floor((innerRight - x) / BOX.advance));
+  return row.length <= room ? row : row.slice(0, room);
+};
+
 const speak = (...paragraphs) =>
-  paragraphs.flatMap((p) => wrapLines(p)).slice(0, MAX_ROWS);
+  paragraphs.flatMap((p) => wrapLines(p)).slice(0, MAX_ROWS).map(clamp);
 
 export function buildJob(payload, state) {
   // Outermost safety boundary: never throw. Returning null means "no box
@@ -66,7 +98,7 @@ export function buildJob(payload, state) {
     return {
       kind: "gate",
       face: "trance",
-      lines: speak("* Kris...", describeTool(payload.tool_name, payload.tool_input)),
+      lines: speak(...describeTool(payload.tool_name, payload.tool_input)),
       options: ["Proceed", "Refuse"],
       default: 0,
       sfx: null,

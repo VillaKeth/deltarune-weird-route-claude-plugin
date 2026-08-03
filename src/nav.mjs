@@ -7,7 +7,8 @@
 // whole interaction is unit-testable without a browser, and the renderer stays
 // a dumb painter that draws what it is told.
 
-export const OPTION_X = Object.freeze({ Proceed: 91, Refuse: 196 });
+// Re-exported for convenience; declared in geometry.mjs, which owns every pixel.
+export { OPTION_X } from "./geometry.mjs";
 
 // One character per tick. Deltarune's crawl is not instant and the sound is
 // per character, so this doubles as the voice cadence.

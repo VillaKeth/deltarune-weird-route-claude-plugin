@@ -6,9 +6,9 @@ import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decodePng } from "../tools/png.mjs";
-import { BOX, innerRight, rowY } from "../src/geometry.mjs";
+import { BOX, innerRight, rowY, OPTION_X } from "../src/geometry.mjs";
 
-const SCALE = 3;
+const SCALE = BOX.scale;
 const JOB = {
   kind: "gate", face: "trance",
   lines: ["* Kris... it wants to", "  rewrite 14 files."],
@@ -16,11 +16,15 @@ const JOB = {
 };
 
 let seq = 0;
-const capture = (job) => new Promise((resolve, reject) => {
+const capture = (job, keys) => new Promise((resolve, reject) => {
   const out = join(tmpdir(), `weird-render-${process.pid}-${seq++}.png`);
   const electron = createRequire(import.meta.url)("electron");
   const child = spawn(electron, ["renderer/popup/main.mjs"], {
-    env: { ...process.env, WEIRD_ROUTE_CAPTURE: out },
+    env: {
+      ...process.env,
+      WEIRD_ROUTE_CAPTURE: out,
+      ...(keys ? { WEIRD_ROUTE_DEV: "1", WEIRD_ROUTE_KEYS: keys } : {}),
+    },
     stdio: ["pipe", "ignore", "pipe"],
   });
   let err = "";
@@ -103,4 +107,42 @@ test("the rendered box matches the declared geometry", async () => {
 
   // Row 2 was never given a line, so nothing may be drawn there.
   assert.equal(glyphColumns(2).length, 0, "row 2 drew text it was not given");
+});
+
+test("the choice row draws both options and the soul, at their declared positions", async () => {
+  // Every other pixel assertion captures at beat 1, which leaves the part of
+  // the box the user actually operates — the labels and the soul — visually
+  // unverified. One Z advances to the choice; a second would confirm it.
+  const { png } = await capture(JOB, "Z");
+  const { png: plain } = await capture(JOB);
+
+  const changed = (row) => {
+    const cols = new Set();
+    for (let y = rowY(row) * SCALE; y < (rowY(row) + BOX.lineHeight) * SCALE; y++) {
+      for (let x = 0; x < png.w; x++) {
+        const a = png.px(x, y), b = plain.px(x, y);
+        if (a.r !== b.r || a.g !== b.g || a.b !== b.b) cols.add(Math.floor(x / SCALE));
+      }
+    }
+    return [...cols].sort((m, n) => m - n);
+  };
+
+  const cols = changed(2);
+  assert.ok(cols.length > 20, `choice row only changed in ${cols.length} columns`);
+
+  // The soul is red and sits one soul-width plus the gap left of "Proceed".
+  const soulX = OPTION_X.Proceed - BOX.soul - BOX.soulGap;
+  let red = 0;
+  for (let y = rowY(2) * SCALE; y < (rowY(2) + BOX.soul) * SCALE; y++) {
+    for (let x = soulX * SCALE; x < (soulX + BOX.soul) * SCALE; x++) {
+      const p = png.px(x, y);
+      if (p.r > 200 && p.g < 60 && p.b < 60) red++;
+    }
+  }
+  assert.ok(red > 300, `soul drew ${red} red px at x=${soulX} — not where geometry says`);
+
+  // Both labels must be inside the box.
+  assert.ok(cols[0] >= soulX, `choice row starts at ${cols[0]}, left of the soul`);
+  assert.ok(cols[cols.length - 1] < innerRight,
+    `choice row ends at ${cols[cols.length - 1]}, past the inner right edge`);
 });

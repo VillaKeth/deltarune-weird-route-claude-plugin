@@ -5,6 +5,20 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join, dirname } from "node:path";
+
+// assets/ is gitignored, and main.mjs refuses when the border or sprite is
+// missing. Two of these cases expect "refuse", so on a fresh clone they would
+// pass for entirely the wrong reason — the expected value IS the failure value.
+// Fail loudly instead.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+for (const asset of ["border.png", "noelle/trance.png", "noelle/speechless.png"]) {
+  if (!existsSync(join(ROOT, "assets", asset))) {
+    throw new Error(`assets/${asset} is missing — these tests cannot prove anything without it`);
+  }
+}
 
 const JOB = {
   kind: "gate", face: "trance",

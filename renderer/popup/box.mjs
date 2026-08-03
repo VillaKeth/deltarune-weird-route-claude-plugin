@@ -15,8 +15,12 @@ const SOUL_RECTS = [
   [6, 12, 4, 1], [7, 13, 2, 1],
 ];
 
+// The rects are authored on a 16x16 grid, so the viewBox is that grid — not a
+// restatement of BOX.soul. The rendered size is BOX.soul, passed in.
+const SOUL_GRID = 16;
+
 const soulSvg = (size) =>
-  `<svg viewBox="0 0 16 16" shape-rendering="crispEdges" width="${size}" height="${size}">` +
+  `<svg viewBox="0 0 ${SOUL_GRID} ${SOUL_GRID}" shape-rendering="crispEdges" width="${size}" height="${size}">` +
   `<g fill="#ff0000">` +
   SOUL_RECTS.map(([x, y, w, h]) => `<rect x="${x}" y="${y}" width="${w}" height="${h}"/>`).join("") +
   `</g></svg>`;
@@ -78,8 +82,8 @@ const drawChoice = (beat, cursor) => {
   const x = optionX[label];
   if (typeof x !== "number") { soul.hidden = true; return; }
   soul.innerHTML = soulSvg(box.soul);
-  // The soul sits one soul-width plus a small gap left of its label.
-  soul.style.left = `${x - box.soul - 6}px`;
+  // One soul-width plus the declared gap, left of its label.
+  soul.style.left = `${x - box.soul - box.soulGap}px`;
   soul.style.top = `${rows[2]}px`;
   soul.hidden = false;
 };
@@ -91,9 +95,9 @@ window.weird.onRender(({ revealed, beat, cursor }) => {
 });
 
 window.weird.onJob((data) => {
-  const { job, scale, assets, box, rows, optionX, state } = data;
+  const { job, scale, assets, box, rows, optionX, faceOffset, state } = data;
   const base = "file:///" + String(assets).replace(/\\/g, "/");
-  ctx = { job, box, rows, optionX, base };
+  ctx = { job, box, rows, optionX, faceOffset, base };
 
   const b = $("box");
   b.style.width = `${box.width}px`;
@@ -116,10 +120,14 @@ window.weird.onJob((data) => {
   if (job.face) {
     const face = $("face");
     face.src = `${base}/noelle/${job.face}.png`;
-    // 56x61 sprite centred in the 67x70 slot -> +5,+4. Derived, not hardcoded.
-    face.style.left = `${box.slot.x + Math.floor((box.slot.w - 56) / 2)}px`;
-    face.style.top = `${box.slot.y + Math.floor((box.slot.h - 61) / 2)}px`;
-    face.width = 56; face.height = 61;
+    // Sprite size and its centring offset are both computed in geometry.mjs and
+    // arrive over IPC. They were written here as the literals 56 and 61 under a
+    // comment claiming they were derived, which is exactly the duplication the
+    // spec forbids.
+    face.style.left = `${ctx.faceOffset.x}px`;
+    face.style.top = `${ctx.faceOffset.y}px`;
+    face.width = box.face.w;
+    face.height = box.face.h;
     face.hidden = false;
   }
 

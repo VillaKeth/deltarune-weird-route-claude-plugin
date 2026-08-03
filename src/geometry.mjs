@@ -15,8 +15,23 @@ export const BOX = Object.freeze({
   asteriskOffset: -1,
   advance: 8,          // measured: Determination Mono Web is true monospace
   soul: 16,
+  soulGap: 6,                    // space between the soul and the label it points at
+  face: Object.freeze({ w: 56, h: 61 }),   // every assets/noelle/*.png, measured
+  scale: 3,                      // on-screen magnification of the whole box
   cornerColor: "rgb(170,255,230)",
   corners: Object.freeze([[6, 6], [290, 6], [6, 77], [290, 77]]),
+});
+
+// Where each option label starts on the choice row. Lives here, not in the
+// interaction module: these are pixel positions, and the spec requires every
+// pixel value be declared exactly once.
+export const OPTION_X = Object.freeze({ Proceed: 91, Refuse: 196 });
+
+// The sprite is centred in its slot. Derived rather than written as 12,11 so a
+// change to either the slot or the sprite size stays consistent.
+export const faceOffset = Object.freeze({
+  x: BOX.slot.x + Math.floor((BOX.slot.w - BOX.face.w) / 2),
+  y: BOX.slot.y + Math.floor((BOX.slot.h - BOX.face.h) / 2),
 });
 
 export const innerRight = BOX.width - BOX.border;   // 290

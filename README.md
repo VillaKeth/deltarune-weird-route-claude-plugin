@@ -48,7 +48,19 @@ was asked, stops Claude, plays the abort jingle, and gives you back a normal pro
 ## Controls
 
 `Z` advances her line, then confirms. `←` `→` move the soul. `X` goes back to her
-line. `Esc` always closes the window and refuses.
+line. `Esc` always closes the window and refuses. The box can also be dragged.
+
+## Where the box appears
+
+Dead centre is the game-accurate placement, and it lands on top of whatever you are
+working on. Set `WEIRD_ROUTE_POS` to move it:
+
+```powershell
+$env:WEIRD_ROUTE_POS = "bottom-right"
+```
+
+`center` (default), `top-left`, `top-right`, `bottom-left`, `bottom-right`. Concurrent
+boxes cascade from there so none can hide underneath another.
 
 ## Develop
 

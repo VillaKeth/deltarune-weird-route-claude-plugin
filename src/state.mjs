@@ -4,7 +4,13 @@ import { fileURLToPath } from "node:url";
 
 export const AUTO_CONTINUE_LIMIT = 25;
 
-const DEFAULT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "state");
+// Overridable so tests can use a temp directory instead of writing session
+// files into the real state/ dir, where a test id could in principle collide
+// with a live session. Cannot force a Proceed: a bad directory yields fresh
+// state, which means the route reads as off and no box is shown — the same as
+// the default state, never an approval.
+const DEFAULT_DIR = process.env.WEIRD_ROUTE_STATE_DIR
+  || join(dirname(fileURLToPath(import.meta.url)), "..", "state");
 const fresh = () => ({ routeActive: false, autoContinues: 0 });
 const pathFor = (sessionId, dir) => join(dir, `${sessionId}.json`);
 

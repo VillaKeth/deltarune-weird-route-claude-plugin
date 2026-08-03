@@ -33,8 +33,40 @@ test("every generated line fits the box", () => {
 });
 
 test("describeTool names the file for an edit", () => {
-  const line = describeTool("Edit", { file_path: "C:\\\\proj\\\\src\\\\auth.ts" });
-  assert.match(line, /auth\.ts/);
+  const [verb, detail] = describeTool("Edit", { file_path: "C:\\proj\\src\\auth.ts" });
+  assert.match(verb, /change/);
+  assert.match(detail, /auth\.ts/);
+});
+
+test("the box shows WHICH thing it is approving, not just the kind", () => {
+  // "it wants to run a command" told the user nothing, and basename() alone
+  // made C:\Windows\System32\drivers\etc\hosts and ./notes/hosts identical.
+  const [, cmd] = describeTool("Bash", { command: "rm -rf build && npm ci" });
+  assert.match(cmd, /rm -rf build/);
+
+  const [, url] = describeTool("WebFetch", { url: "https://example.com/a/b" });
+  assert.match(url, /example\.com/);
+
+  const system = describeTool("Write", { file_path: "C:\\Windows\\System32\\drivers\\etc\\hosts" })[1];
+  const notes = describeTool("Write", { file_path: "./notes/hosts" })[1];
+  assert.notEqual(system, notes, "two different paths must not render identically");
+  assert.match(system, /System32|drivers|etc/, "the distinguishing part must survive");
+});
+
+test("describeTool truncates rather than overflowing, keeping the telling end", () => {
+  const deep = "/a/very/long/path/that/keeps/going/" + "x".repeat(200) + "/target.ts";
+  const [, detail] = describeTool("Write", { file_path: deep });
+  assert.ok(detail.length <= (MAX_CHARS.withPortrait - 2) * 2, `detail was ${detail.length} chars`);
+  assert.match(detail, /target\.ts$/, "a path keeps its end");
+
+  const long = "git log --oneline " + "y".repeat(300);
+  const [, cmd] = describeTool("Bash", { command: long });
+  assert.match(cmd, /^git log --oneline/, "a command keeps its start");
+});
+
+test("describeTool reports empty inputs rather than rendering nothing", () => {
+  assert.equal(describeTool("Bash", { command: "   " })[1], "(nothing)");
+  assert.equal(describeTool("Write", {})[1], "(nothing)");
 });
 
 test("a Stop with the counter at the limit raises a gate box", () => {

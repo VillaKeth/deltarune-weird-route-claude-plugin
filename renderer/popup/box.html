@@ -11,7 +11,9 @@
                background: transparent; overflow: hidden; }
   #box { position: relative; image-rendering: pixelated;
          transform-origin: top left; font-family: "DTM", monospace; color: #fff; }
-  #fill   { position: absolute; background: #000; }
+  /* Draggable, so a box stacked under another can always be pulled aside.
+     Frameless + skipTaskbar means there is no other way to move it. */
+  #fill   { position: absolute; background: #000; -webkit-app-region: drag; }
   #face, #border { position: absolute; image-rendering: pixelated; }
   #border { left: 0; top: 0; pointer-events: none; }
   .t     { position: absolute; white-space: pre; }
