@@ -6,10 +6,10 @@ state/
 .superpowers/
 .playwright-mcp/
 
-# Machine-local trust settings. This file carries defaultMode, and committing
-# a "bypassPermissions" default hands unprompted tool execution to anyone who
-# clones the repo.
-.claude/settings.json
+# Machine-local trust settings. defaultMode lives here, NOT in settings.json —
+# committing a "bypassPermissions" default would hand unprompted tool execution
+# to anyone who clones the repo. settings.json carries only the hook wiring,
+# which is the plugin itself and must be committed.
 .claude/settings.local.json
 
 # Another project's material, left in this workspace. Not ours to commit.

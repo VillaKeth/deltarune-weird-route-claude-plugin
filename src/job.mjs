@@ -3,6 +3,18 @@ import { atLimit } from "./state.mjs";
 
 export const CONSEQUENTIAL_TOOLS = ["Write", "Edit", "Bash", "WebFetch", "Task"];
 
+// TEST_MODE makes every tool consequential and ignores the route flag, so the
+// box can be seen in seconds instead of by waiting for a real gate.
+const testMode = () => !!process.env.TEST_MODE;
+
+// The route has to be able to start. Without a trigger, routeActive is false
+// forever, buildJob returns null for everything, and the plugin can never fire
+// a single box — which is how the plan left it.
+export const ROUTE_TRIGGER = /(?:^\s*\/?weird[-\s]?route\b)|(?:\bweird route\b)/i;
+
+export const isRouteTrigger = (prompt) =>
+  typeof prompt === "string" && ROUTE_TRIGGER.test(prompt);
+
 const basename = (p = "") => String(p).split(/[\\/]/).pop() || String(p);
 
 export function describeTool(toolName, toolInput) {
@@ -32,10 +44,25 @@ export function buildJob(payload, state) {
   // warranted", which leaves Claude Code's own permission flow in charge.
   if (!payload || typeof payload !== "object") return null;
   if (!state || typeof state !== "object") return null;
-  if (!state.routeActive) return null;
+
+  // Starting the route is the one gate that fires while the route is off.
+  if (payload.hook_event_name === "UserPromptSubmit") {
+    if (state.routeActive) return null;              // already running
+    if (!isRouteTrigger(payload.prompt)) return null;
+    return {
+      kind: "start",
+      face: "trance",
+      lines: speak("* Kris.", "* let's finish what we started."),
+      options: ["Proceed", "Refuse"],
+      default: 0,
+      sfx: "start",
+    };
+  }
+
+  if (!state.routeActive && !testMode()) return null;
 
   if (payload.hook_event_name === "PreToolUse") {
-    if (!CONSEQUENTIAL_TOOLS.includes(payload.tool_name)) return null;
+    if (!testMode() && !CONSEQUENTIAL_TOOLS.includes(payload.tool_name)) return null;
     return {
       kind: "gate",
       face: "trance",

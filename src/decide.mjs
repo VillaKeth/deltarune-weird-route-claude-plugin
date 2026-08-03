@@ -50,6 +50,13 @@ export async function decide(payload, state, ask) {
     return { output: {}, nextState: { ...state, routeActive: false } };
   }
 
+  // Starting the route is the only place routeActive is ever set true. Refuse
+  // simply leaves it off, so declining the invitation is a no-op, not an abort.
+  if (job.kind === "start") {
+    const started = (await safeAsk(ask, job)) === "proceed";
+    return { output: {}, nextState: { ...state, routeActive: started, autoContinues: 0 } };
+  }
+
   const choice = await safeAsk(ask, job);
 
   if (choice === "refuse") {
