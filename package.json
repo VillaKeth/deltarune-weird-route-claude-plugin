@@ -1,0 +1,13 @@
+{
+  "name": "deltarune-weird-route",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/",
+    "box": "electron renderer/popup/main.mjs"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0"
+  }
+}
