@@ -1,0 +1,7 @@
+# Copyrighted Toby Fox material — sprites, font, SFX. Never commit.
+assets/
+
+node_modules/
+state/
+.superpowers/
+.playwright-mcp/
