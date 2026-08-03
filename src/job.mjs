@@ -1,4 +1,4 @@
-import { wrapLines, MAX_ROWS, MAX_CHARS, BOX, innerRight } from "./geometry.mjs";
+import { wrapLines, MAX_ROWS, MAX_CHARS, BOX, INDENT, innerRight } from "./geometry.mjs";
 import { atLimit } from "./state.mjs";
 
 export const CONSEQUENTIAL_TOOLS = ["Write", "Edit", "Bash", "WebFetch", "Task"];
@@ -15,10 +15,10 @@ export const ROUTE_TRIGGER = /(?:^\s*\/?weird[-\s]?route\b)|(?:\bweird route\b)/
 export const isRouteTrigger = (prompt) =>
   typeof prompt === "string" && ROUTE_TRIGGER.test(prompt);
 
-// A box with options owns only the rows ABOVE the choice row, so the detail
-// gets exactly one row. It used to be budgeted for two, which is how a
-// three-row line ended up painted underneath Proceed/Refuse.
-const DETAIL_BUDGET = MAX_CHARS.withPortrait;
+// The detail is spoken as a continuation of the verb above it, so every row it
+// occupies is indented. Two of those rows sit under a one-row verb, which is the
+// whole box.
+const DETAIL_BUDGET = (MAX_CHARS.withPortrait - INDENT.length) * 2;
 
 // A path's identity is at its END — basename alone made
 // C:\Windows\System32\drivers\etc\hosts and ./notes/hosts render identically.
@@ -54,14 +54,6 @@ export function describeTool(toolName, toolInput) {
   }
 }
 
-// The choice row IS row 2. Text and options are drawn by separate passes at the
-// same coordinates, so anything she says on row 2 ends up underneath Proceed and
-// Refuse — which is exactly what happened: the start box wrapped to three rows
-// and the third one collided with the choice. A box carrying options therefore
-// owns only rows 0-1; only the route-complete box, which has no choice, gets all
-// three. SPEAK_ROWS makes that reservation explicit rather than incidental.
-export const SPEAK_ROWS = Object.freeze({ withOptions: MAX_ROWS - 1, alone: MAX_ROWS });
-
 // The spec requires that no run pass the inner right edge. Enforced here, where
 // the rows are built, rather than in the renderer — but by CLAMPING, never by
 // throwing. assertFits throws, and a throw inside buildJob crashes the hook,
@@ -75,12 +67,18 @@ const clamp = (row) => {
   return row.length <= room ? row : row.slice(0, room);
 };
 
-const speak = (maxRows, ...paragraphs) =>
-  paragraphs.flatMap((p) => wrapLines(p)).slice(0, maxRows).map(clamp);
-
-// Every box that offers a choice speaks through this, so the reservation cannot
-// be forgotten at one call site the way it was at all of them.
-const speakAbove = (...paragraphs) => speak(SPEAK_ROWS.withOptions, ...paragraphs);
+// Every box gets all three rows. Beat 2 clears her line and shows nothing but
+// the choice, so text and options never occupy the box at the same time and no
+// row has to be held back for them.
+//
+// A paragraph opening with "*" is a new sentence and starts at the margin.
+// Anything else continues the paragraph above it, and is indented to align with
+// that sentence's text rather than with its asterisk.
+const speak = (...paragraphs) =>
+  paragraphs
+    .flatMap((p) => wrapLines(p, { continuation: !p.startsWith("*") }))
+    .slice(0, MAX_ROWS)
+    .map(clamp);
 
 export function buildJob(payload, state) {
   // Outermost safety boundary: never throw. Returning null means "no box
@@ -95,8 +93,7 @@ export function buildJob(payload, state) {
     return {
       kind: "start",
       face: "trance",
-      // Two rows, deliberately. The old copy wrapped to three and collided.
-      lines: speakAbove("* Kris.", "* let's finish this."),
+      lines: speak("* Kris.", "* let's finish what we started."),
       options: ["Proceed", "Refuse"],
       default: 0,
       sfx: "start",
@@ -110,7 +107,7 @@ export function buildJob(payload, state) {
     return {
       kind: "gate",
       face: "trance",
-      lines: speakAbove(...describeTool(payload.tool_name, payload.tool_input)),
+      lines: speak(...describeTool(payload.tool_name, payload.tool_input)),
       options: ["Proceed", "Refuse"],
       default: 0,
       sfx: null,
@@ -121,7 +118,7 @@ export function buildJob(payload, state) {
     return {
       kind: "gate",
       face: "mortified",
-      lines: speakAbove("* Kris... it's waiting for you."),
+      lines: speak("* Kris... it's waiting for you."),
       options: ["Proceed", "Refuse"],
       default: 0,
       sfx: null,
@@ -133,8 +130,7 @@ export function buildJob(payload, state) {
       return {
         kind: "complete",
         face: "speechless",
-        // No options, so this one may use all three rows.
-        lines: speak(SPEAK_ROWS.alone, "* ...it's done, Kris."),
+        lines: speak("* ...it's done, Kris."),
         options: [],
         default: 0,
         sfx: null,
@@ -144,7 +140,7 @@ export function buildJob(payload, state) {
       return {
         kind: "gate",
         face: "mortified_stare",
-        lines: speakAbove("* Kris... how long has it been?"),
+        lines: speak("* Kris... how long has it been?"),
         options: ["Proceed", "Refuse"],
         default: 0,
         sfx: null,

@@ -32,11 +32,7 @@ test("every generated line fits the box", () => {
   assert.ok(job.lines.length <= 3);
 });
 
-test("no box with options ever speaks on the choice row", () => {
-  // The choice row IS row 2, and text and options are drawn by separate passes
-  // at the same coordinates. The start box wrapped to three rows and the third
-  // was painted underneath Proceed/Refuse. Every assertion in the suite passed
-  // through it, because nothing compared the two passes against each other.
+test("no box, however it is provoked, speaks more rows than the box has", () => {
   const jobs = [
     buildJob({ hook_event_name: "UserPromptSubmit", prompt: "weird route" },
              { routeActive: false, autoContinues: 0 }),
@@ -52,16 +48,35 @@ test("no box with options ever speaks on the choice row", () => {
 
   for (const job of jobs) {
     assert.ok(job, "expected a box");
-    assert.ok(job.options.length > 0, "these all offer a choice");
-    assert.ok(job.lines.length <= MAX_ROWS - 1,
+    assert.ok(job.lines.length <= MAX_ROWS,
       `${job.kind}/${job.face} speaks ${job.lines.length} rows: ${JSON.stringify(job.lines)}`);
+    for (const line of job.lines) {
+      assert.ok(line.length <= MAX_CHARS.withPortrait, `"${line}" is ${line.length} chars`);
+    }
   }
 });
 
-test("the route-complete box may use every row, having no choice to collide with", () => {
-  const job = buildJob({ hook_event_name: "Stop", next: null }, active);
-  assert.equal(job.options.length, 0);
-  assert.ok(job.lines.length <= MAX_ROWS);
+test("a detail is indented to align with the sentence above it, not with its asterisk", () => {
+  // describeTool speaks the verb and the detail as two paragraphs, and each
+  // paragraph was wrapped by its own call — which restarted the wrapper at its
+  // first row and left the detail hanging back under the "*".
+  const job = buildJob(
+    { hook_event_name: "PreToolUse", tool_name: "Bash",
+      tool_input: { command: "npm test && git push origin main" } },
+    active);
+
+  assert.match(job.lines[0], /^\* /, "the verb opens the paragraph");
+  assert.ok(job.lines.length > 1, "expected a detail row");
+  for (const line of job.lines.slice(1)) {
+    assert.match(line, /^ {2}\S/, `"${line}" is not indented past the asterisk`);
+  }
+});
+
+test("a new sentence starts at the margin rather than being indented as a continuation", () => {
+  const job = buildJob({ hook_event_name: "UserPromptSubmit", prompt: "weird route" },
+                       { routeActive: false, autoContinues: 0 });
+  assert.match(job.lines[0], /^\* Kris\./);
+  assert.match(job.lines[1], /^\* /, "her second sentence is a sentence, not a continuation");
 });
 
 test("describeTool names the file for an edit", () => {

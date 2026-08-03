@@ -46,15 +46,18 @@ window.weird.onSfx((file) => {
 const drawText = (revealed, beat) => {
   const { job, box, rows } = ctx;
   const textX = job.face ? box.textX.withPortrait : box.textX.noPortrait;
-  // Defence in depth: the choice row belongs to the options once they are
-  // showing. job.mjs already reserves it, but text and options are drawn by
-  // two independent passes at the same coordinates, so nothing structural
-  // stopped them colliding — and they did.
-  const limit = beat === 2 && job.options.length > 0 ? rows.length - 1 : rows.length;
+  // The two beats are two screens. Beat 2 is the choice and nothing else — her
+  // line is gone, exactly as the game does it. Clipping only the choice row was
+  // not enough: text and options are painted by two independent passes at the
+  // same coordinates, so they still shared the box.
+  if (beat === 2 && job.options.length > 0) {
+    $("text").innerHTML = "";
+    return;
+  }
   let budget = revealed;
   const spans = [];
   job.lines.forEach((line, i) => {
-    if (i >= limit) return;
+    if (i >= rows.length) return;          // a job carrying more rows than exist
     const shown = line.slice(0, Math.max(0, budget));
     budget -= line.length;
     // An asterisk row hangs one pixel left; a continuation row does not.

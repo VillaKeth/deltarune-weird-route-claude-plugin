@@ -146,3 +146,23 @@ test("the choice row draws both options and the soul, at their declared position
   assert.ok(cols[cols.length - 1] < innerRight,
     `choice row ends at ${cols[cols.length - 1]}, past the inner right edge`);
 });
+
+test("beat 2 is its own screen: her line is gone, not merely clipped", async () => {
+  // The two passes that paint text and options share coordinates, so the only
+  // honest way to assert they do not collide is to look at the pixels. A box
+  // showing the choice must be pixel-identical, above the choice row, to the
+  // same box with nothing to say.
+  const { png } = await capture(JOB, "Z");
+  const { png: mute } = await capture({ ...JOB, lines: [] });
+
+  for (const row of [0, 1]) {
+    let differing = 0;
+    for (let y = rowY(row) * SCALE; y < (rowY(row) + BOX.lineHeight) * SCALE; y++) {
+      for (let x = 0; x < png.w; x++) {
+        const a = png.px(x, y), b = mute.px(x, y);
+        if (a.r !== b.r || a.g !== b.g || a.b !== b.b || a.a !== b.a) differing++;
+      }
+    }
+    assert.equal(differing, 0, `row ${row} still shows ${differing} px of her line at beat 2`);
+  }
+});

@@ -45,18 +45,24 @@ export const MAX_CHARS = Object.freeze({
 
 export const MAX_ROWS = 3;
 
-const INDENT = "  ";
+export const INDENT = "  ";
 
 // Continuation rows carry a two-space indent, so their usable width is two
 // less than the first row's. Budgeting both rows identically is what let an
 // over-long row escape: the indent was added after the fit check, not before.
 // A token too long for an entire row is hard-broken rather than allowed to
 // overflow — tool descriptions carry real filenames, which routinely exceed 27.
-export function wrapLines(text, { withPortrait = true } = {}) {
+//
+// `continuation` starts the wrap already past the first row, so every row it
+// returns is indented. A paragraph that continues the one above it — the detail
+// under "* it wants to run" — is a separate call to this function, and used to
+// restart at first=true and hang back under the asterisk instead of aligning
+// with her text.
+export function wrapLines(text, { withPortrait = true, continuation = false } = {}) {
   const max = withPortrait ? MAX_CHARS.withPortrait : MAX_CHARS.noPortrait;
   const out = [];
   let cur = "";
-  let first = true;
+  let first = !continuation;
 
   const budget = () => (first ? max : max - INDENT.length);
   const fits = (s) => s.length <= budget();
