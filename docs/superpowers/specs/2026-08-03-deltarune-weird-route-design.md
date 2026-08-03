@@ -86,7 +86,7 @@ silently, with no box and no keypress.
 | Event | Hook | Proceed | Refuse |
 |---|---|---|---|
 | Consequential tool call | `PreToolUse` | `allow` the call | `deny` the call **and end the route** |
-| Claude paused / waiting | `Notification` | resume | stand down, end the route |
+| Claude paused / waiting | `Notification` | acknowledge (see below) | end the route |
 | 25 auto-continues elapsed | `Stop` | reset counter, continue | end the route |
 | Turn ends with no `NEXT:` | `Stop` | route-complete box — see below | |
 
@@ -98,6 +98,14 @@ returns a normal prompt to the user. Refuse means *no, I'm driving now*.
 there is nothing to proceed to, so the box shows only Noelle's closing line with no
 soul and no options. `Z` or `Esc` dismisses it and the route ends. Completion is not
 an abort, so it plays no jingle.
+
+**`Notification` cannot resume anything.** Verified against the Claude Code hook
+documentation: `Notification` hooks have no decision control — they exist for side
+effects and cannot block or modify behaviour. An earlier draft of this spec claimed
+Proceed "resumes", which was never achievable. What the box actually does on a
+`Notification` is decide the route's own fate: Proceed leaves the route running so
+later gates still fire, Refuse ends it. Nothing in either branch reaches Claude Code,
+and the hook's output is always `{}`.
 
 **Consequential tools:** `Write`, `Edit`, `Bash`, `WebFetch`, `Task`. `Read`, `Grep`,
 `Glob` and other read-only tools never gate — gating them produces a box every few

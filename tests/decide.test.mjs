@@ -76,6 +76,31 @@ test("a rejecting ask denies instead of crashing the hook", async () => {
   assert.equal(nextState.routeActive, false);
 });
 
+// Notification hooks have NO decision control in Claude Code — they cannot block
+// or modify behaviour. So the box on a Notification decides only the route's own
+// fate, and the hook output is always {}. Both branches were previously untested.
+test("Notification proceed keeps the route running and emits no decision", async () => {
+  const { output, nextState } = await decide(
+    { hook_event_name: "Notification" }, active, proceed);
+  assert.deepEqual(output, {}, "Notification output must carry no decision");
+  assert.equal(nextState.routeActive, true);
+});
+
+test("Notification refuse ends the route and emits no decision", async () => {
+  const { output, nextState } = await decide(
+    { hook_event_name: "Notification" }, active, refuse);
+  assert.deepEqual(output, {});
+  assert.equal(nextState.routeActive, false);
+});
+
+test("refusing at the ceiling ends the route and does not block", async () => {
+  const { output, nextState } = await decide(
+    { hook_event_name: "Stop", next: "keep going" },
+    { routeActive: true, autoContinues: 25 }, refuse);
+  assert.equal(output.decision, undefined, "a refusal must never block-and-continue");
+  assert.equal(nextState.routeActive, false);
+});
+
 test("decide never throws on a malformed payload or state", async () => {
   for (const payload of [null, undefined, 42, "nope", []]) {
     await assert.doesNotReject(() => decide(payload, active, proceed));

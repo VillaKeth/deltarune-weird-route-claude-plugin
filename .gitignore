@@ -5,3 +5,12 @@ node_modules/
 state/
 .superpowers/
 .playwright-mcp/
+
+# Machine-local trust settings. This file carries defaultMode, and committing
+# a "bypassPermissions" default hands unprompted tool execution to anyone who
+# clones the repo.
+.claude/settings.json
+.claude/settings.local.json
+
+# Another project's material, left in this workspace. Not ours to commit.
+.claude/_archive-wellnessscape/

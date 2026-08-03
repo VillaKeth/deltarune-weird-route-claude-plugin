@@ -100,6 +100,38 @@ test("wrapLines indents continuation rows by two", () => {
   for (const r of rows.slice(1)) assert.equal(r.startsWith("  "), true);
 });
 
+// The three cases below are regressions. The original algorithm compared the
+// fit before adding the continuation indent, so every one of them produced a
+// row wider than the box.
+test("a word longer than a whole row is hard-broken, never overflowed", () => {
+  const rows = wrapLines("Supercalifragilisticexpialidocious is great");
+  for (const r of rows) assert.ok(r.length <= 27, `"${r}" is ${r.length} chars`);
+});
+
+test("wrapLines never emits an empty row", () => {
+  for (const input of [
+    "Supercalifragilisticexpialidocious is great",
+    "Hi " + "x".repeat(26),
+    "* it wants to change PaymentGatewayIntegrationTest.spec.ts.",
+  ]) {
+    for (const r of wrapLines(input)) assert.notEqual(r, "", `empty row from "${input}"`);
+  }
+});
+
+test("a realistic long filename stays inside the box", () => {
+  const rows = wrapLines("* it wants to change PaymentGatewayIntegrationTest.spec.ts.");
+  for (const r of rows) assert.ok(r.length <= 27, `"${r}" is ${r.length} chars`);
+  assert.equal(rows.join("").includes("PaymentGatewayIntegration"), true,
+    "hard-break must not silently drop characters");
+});
+
+test("the continuation indent counts against the budget", () => {
+  const rows = wrapLines("Hi " + "x".repeat(26));
+  const continuation = rows.slice(1);
+  assert.ok(continuation.length > 0);
+  for (const r of continuation) assert.ok(r.length <= 27, `"${r}" is ${r.length} chars`);
+});
+
 test("assertFits rejects a run past the inner right edge", () => {
   assert.throws(() => assertFits(196, "ThisIsFarTooLongToFit", "Refuse"), /inner right edge/);
   assert.equal(assertFits(196, "Refuse", "Refuse"), 196);
@@ -120,7 +152,7 @@ Expected: FAIL — `Cannot find module '../src/geometry.mjs'`
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test",
     "box": "electron renderer/popup/main.mjs"
   },
   "devDependencies": {
@@ -176,20 +208,40 @@ export const MAX_CHARS = Object.freeze({
 
 export const MAX_ROWS = 3;
 
+const INDENT = "  ";
+
+// Continuation rows carry a two-space indent, so their usable width is two
+// less than the first row's. Budgeting both rows identically is what let an
+// over-long row escape: the indent was added after the fit check, not before.
+// A token too long for an entire row is hard-broken rather than allowed to
+// overflow — tool descriptions carry real filenames, which routinely exceed 27.
 export function wrapLines(text, { withPortrait = true } = {}) {
   const max = withPortrait ? MAX_CHARS.withPortrait : MAX_CHARS.noPortrait;
   const out = [];
   let cur = "";
+  let first = true;
+
+  const budget = () => (first ? max : max - INDENT.length);
+  const fits = (s) => s.length <= budget();
+  const flush = () => {
+    if (cur === "") return;                 // never emit an empty row
+    out.push(first ? cur : INDENT + cur);
+    first = false;
+    cur = "";
+  };
+
   for (const word of text.split(" ")) {
-    const next = cur === "" ? word : `${cur} ${word}`;
-    if (next.length > max) {
-      out.push(cur);
-      cur = `  ${word}`;
-    } else {
-      cur = next;
+    if (word === "") continue;
+    let rest = word;
+    if (cur !== "" && !fits(`${cur} ${rest}`)) flush();
+    while (!fits(rest)) {
+      cur = rest.slice(0, budget());
+      rest = rest.slice(budget());
+      flush();
     }
+    cur = cur === "" ? rest : `${cur} ${rest}`;
   }
-  if (cur) out.push(cur);
+  flush();
   return out;
 }
 
@@ -271,6 +323,38 @@ test("reads the last assistant message from a JSONL transcript", async () => {
 test("returns empty string when the transcript is unreadable", async () => {
   assert.equal(await readLastAssistantText("/nope/missing.jsonl"), "");
 });
+
+// Regressions. This module's whole contract is that it never throws: the
+// caller reads a throw as a crashed hook, which breaks the live session.
+test("a structurally useless but syntactically valid line does not throw", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wr-"));
+  for (const [name, junk] of [["null", "null"], ["number", "42"], ["string", '"oops"'], ["array", "[1,2]"]]) {
+    const path = join(dir, `${name}.jsonl`);
+    await writeFile(path, `${JSON.stringify({ type: "assistant", message: { content: "hi" } })}\n${junk}`);
+    assert.equal(await readLastAssistantText(path), "hi", `a bare ${name} line broke the reader`);
+  }
+});
+
+test("extractNext survives a non-string argument", () => {
+  for (const junk of [42, true, [], {}, null, undefined]) {
+    assert.equal(extractNext(junk), null, `extractNext(${JSON.stringify(junk)}) should be null`);
+  }
+});
+
+test("a malformed content block does not throw", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wr-"));
+  const cases = {
+    "null-block": { content: [null], expect: "" },
+    "number-block": { content: [42], expect: "" },
+    "text-then-null": { content: [{ type: "text", text: "a" }, null], expect: "a" },
+    "text-missing": { content: [{ type: "text" }], expect: "" },
+  };
+  for (const [name, { content, expect }] of Object.entries(cases)) {
+    const path = join(dir, `${name}.jsonl`);
+    await writeFile(path, JSON.stringify({ type: "assistant", message: { content } }));
+    assert.equal(await readLastAssistantText(path), expect, `${name} broke the reader`);
+  }
+});
 ```
 
 - [ ] **Step 2: Run the test and confirm it fails**
@@ -287,7 +371,8 @@ import { readFile } from "node:fs/promises";
 const MARKER = /^NEXT:\s*(.+?)\s*$/gm;
 
 export function extractNext(text) {
-  if (!text) return null;
+  // Guard the type, not just falsiness: a truthy non-string has no .matchAll.
+  if (typeof text !== "string" || !text) return null;
   let last = null;
   for (const m of text.matchAll(MARKER)) {
     const value = m[1].trim();
@@ -315,11 +400,20 @@ export async function readLastAssistantText(transcriptPath) {
     } catch {
       continue;
     }
-    if (entry.type !== "assistant") continue;
+    // JSON.parse("null") succeeds and yields null, so the type check has to
+    // survive a line that is syntactically valid but structurally useless.
+    // Dereferencing .type here is outside the try/catch above.
+    if (!entry || typeof entry !== "object" || entry.type !== "assistant") continue;
     const content = entry.message?.content;
     if (typeof content === "string") latest = content;
     else if (Array.isArray(content)) {
-      latest = content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+      // Blocks are guarded the same way entries are: a null or non-object
+      // block would make `.type` and `.text` unguarded dereferences, and
+      // nothing here is inside a try/catch.
+      latest = content
+        .filter((b) => b && typeof b === "object" && b.type === "text")
+        .map((b) => (typeof b.text === "string" ? b.text : ""))
+        .join("\n");
     }
   }
   return latest;
@@ -401,6 +495,52 @@ test("reset clears the counter but leaves the route running", () => {
   assert.deepEqual(reset({ routeActive: true, autoContinues: 25 }),
                    { routeActive: true, autoContinues: 0 });
 });
+
+// Regressions. The counter is the only ceiling on free-running: a damaged one
+// must never silently remove it. These all failed before sanitisation.
+test("a damaged counter on disk loads as zero, not as garbage", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wr-"));
+  const bodies = {
+    "str": '{"routeActive":true,"autoContinues":"5"}',
+    "garbage": '{"routeActive":true,"autoContinues":"abc"}',
+    "negative": '{"routeActive":true,"autoContinues":-9}',
+    "float": '{"routeActive":true,"autoContinues":2.7}',
+    "absent": '{"routeActive":true}',
+    "notObject": "42",
+    "arr": "[]",
+  };
+  for (const [name, body] of Object.entries(bodies)) {
+    await writeFile(join(dir, `${name}.json`), body);
+    const state = await loadState(name, dir);
+    assert.equal(state.autoContinues, 0, `${name} produced ${state.autoContinues}`);
+  }
+});
+
+test("bump always yields a usable number", () => {
+  for (const junk of ["abc", "5", null, undefined, {}, [], -3, 2.7, NaN]) {
+    const next = bump({ routeActive: true, autoContinues: junk }).autoContinues;
+    assert.ok(Number.isInteger(next) && next > 0, `bump(${JSON.stringify(junk)}) gave ${next}`);
+  }
+});
+
+test("the ceiling always becomes reachable, whatever the counter started as", () => {
+  for (const junk of ["abc", null, undefined, {}, [], NaN]) {
+    let state = { routeActive: true, autoContinues: junk };
+    let tripped = false;
+    for (let i = 0; i < AUTO_CONTINUE_LIMIT + 5 && !tripped; i++) {
+      state = bump(state);
+      tripped = atLimit(state);
+    }
+    assert.ok(tripped, `ceiling never tripped from ${JSON.stringify(junk)}`);
+  }
+});
+
+test("atLimit fails closed on a counter it cannot trust", () => {
+  for (const junk of ["abc", null, undefined, {}, NaN, 2.7]) {
+    assert.equal(atLimit({ routeActive: true, autoContinues: junk }), true,
+      `atLimit(${JSON.stringify(junk)}) should fail closed`);
+  }
+});
 ```
 
 - [ ] **Step 2: Run the test and confirm it fails**
@@ -422,10 +562,21 @@ const DEFAULT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "state")
 const fresh = () => ({ routeActive: false, autoContinues: 0 });
 const pathFor = (sessionId, dir) => join(dir, `${sessionId}.json`);
 
+// The counter is the only ceiling on free-running, so a damaged one must not
+// silently disable it. Anything that is not a non-negative integer is treated
+// as unusable and reset to 0 on load; atLimit below fails closed if a damaged
+// value reaches it in memory anyway.
+const sanitiseCount = (value) =>
+  Number.isInteger(value) && value >= 0 ? value : 0;
+
 export async function loadState(sessionId, dir = DEFAULT_DIR) {
   try {
     const parsed = JSON.parse(await readFile(pathFor(sessionId, dir), "utf8"));
-    return { routeActive: !!parsed.routeActive, autoContinues: parsed.autoContinues ?? 0 };
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return fresh();
+    return {
+      routeActive: !!parsed.routeActive,
+      autoContinues: sanitiseCount(parsed.autoContinues),
+    };
   } catch {
     return fresh();
   }
@@ -436,9 +587,18 @@ export async function saveState(sessionId, state, dir = DEFAULT_DIR) {
   await writeFile(pathFor(sessionId, dir), JSON.stringify(state), "utf8");
 }
 
-export const bump = (state) => ({ ...state, autoContinues: state.autoContinues + 1 });
+export const bump = (state) => ({
+  ...state,
+  autoContinues: sanitiseCount(state?.autoContinues) + 1,
+});
+
 export const reset = (state) => ({ ...state, autoContinues: 0 });
-export const atLimit = (state) => state.autoContinues >= AUTO_CONTINUE_LIMIT;
+
+// Fails closed: a counter that is not a usable number is treated as AT the
+// limit, so a damaged state file forces the box back rather than removing the
+// only ceiling on free-running.
+export const atLimit = (state) =>
+  !Number.isInteger(state?.autoContinues) || state.autoContinues >= AUTO_CONTINUE_LIMIT;
 ```
 
 - [ ] **Step 4: Run the test and confirm it passes**
@@ -539,6 +699,51 @@ test("nothing gates when the route is not running", () => {
   const idle = { routeActive: false, autoContinues: 0 };
   assert.equal(buildJob({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {} }, idle), null);
 });
+
+// Regressions. buildJob sits on the fail-closed path: a throw here crashes the
+// hook, and a crashed PreToolUse hook can let the tool call through unsupervised.
+test("buildJob never throws on a malformed payload", () => {
+  const payloads = [
+    { hook_event_name: "PreToolUse", tool_name: "Edit" },
+    { hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: null },
+    { hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: "nope" },
+    { hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: null } },
+    { hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: "" } },
+    { hook_event_name: "PreToolUse", tool_name: null, tool_input: {} },
+    { hook_event_name: "Nonsense" },
+    {},
+    null,
+    undefined,
+  ];
+  for (const payload of payloads) {
+    assert.doesNotThrow(() => buildJob(payload, active), `threw on ${JSON.stringify(payload)}`);
+  }
+});
+
+test("buildJob never throws on a malformed state", () => {
+  const call = { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {} };
+  for (const state of [null, undefined, 42, "nope", []]) {
+    assert.doesNotThrow(() => buildJob(call, state), `threw on state ${JSON.stringify(state)}`);
+  }
+});
+
+test("describeTool survives a null tool_input", () => {
+  for (const tool of CONSEQUENTIAL_TOOLS) {
+    assert.doesNotThrow(() => describeTool(tool, null), `${tool} threw on null input`);
+    assert.doesNotThrow(() => describeTool(tool, undefined), `${tool} threw on undefined input`);
+  }
+});
+
+test("a very long path still fits three rows inside the box", () => {
+  const job = buildJob({
+    hook_event_name: "PreToolUse", tool_name: "Write",
+    tool_input: { file_path: `C:/x/${"Segment".repeat(30)}.ts` },
+  }, active);
+  assert.ok(job.lines.length <= 3, `${job.lines.length} rows`);
+  for (const line of job.lines) {
+    assert.ok(line.length <= MAX_CHARS.withPortrait, `"${line}" is ${line.length} chars`);
+  }
+});
 ```
 
 - [ ] **Step 2: Run the test and confirm it fails**
@@ -557,10 +762,15 @@ export const CONSEQUENTIAL_TOOLS = ["Write", "Edit", "Bash", "WebFetch", "Task"]
 
 const basename = (p = "") => String(p).split(/[\\/]/).pop() || String(p);
 
-export function describeTool(toolName, toolInput = {}) {
+export function describeTool(toolName, toolInput) {
+  // A default parameter only fires for undefined, never for an explicit null.
+  // Hook payloads are external input, and this module sits on the fail-closed
+  // path: a throw here crashes the hook, and a crashed PreToolUse hook can let
+  // the tool call through unsupervised — the exact inversion of the invariant.
+  const input = toolInput && typeof toolInput === "object" ? toolInput : {};
   switch (toolName) {
-    case "Write":  return `* it wants to write ${basename(toolInput.file_path)}.`;
-    case "Edit":   return `* it wants to change ${basename(toolInput.file_path)}.`;
+    case "Write":  return `* it wants to write ${basename(input.file_path)}.`;
+    case "Edit":   return `* it wants to change ${basename(input.file_path)}.`;
     case "Bash":   return `* it wants to run a command.`;
     case "WebFetch": return `* it wants to reach the outside.`;
     case "Task":   return `* it wants to send someone else.`;
@@ -575,6 +785,10 @@ const speak = (...paragraphs) =>
   paragraphs.flatMap((p) => wrapLines(p)).slice(0, MAX_ROWS);
 
 export function buildJob(payload, state) {
+  // Outermost safety boundary: never throw. Returning null means "no box
+  // warranted", which leaves Claude Code's own permission flow in charge.
+  if (!payload || typeof payload !== "object") return null;
+  if (!state || typeof state !== "object") return null;
   if (!state.routeActive) return null;
 
   if (payload.hook_event_name === "PreToolUse") {
@@ -701,6 +915,39 @@ test("a missing renderer binary fails closed", async () => {
 test("a hung renderer is killed and fails closed", async () => {
   assert.equal(await run("hang", 300), "refuse");
 });
+
+// Regression. A renderer that exits before draining stdin makes the write fail
+// asynchronously; streams surface that as an "error" event, which no try/catch
+// around .end() can see. Unhandled it is an uncaught exception that takes the
+// whole hook process down — and a crashed PreToolUse hook fails OPEN.
+test("a renderer that exits without reading stdin does not crash the process", async () => {
+  const big = { ...job, lines: Array(60_000).fill("* padding line") };
+  assert.equal(
+    await askUser(big, { command: process.execPath, args: [FAKE, "proceed"] }),
+    "proceed",
+  );
+});
+
+test("a huge payload to a crashing renderer still fails closed", async () => {
+  const big = { ...job, lines: Array(60_000).fill("* padding line") };
+  assert.equal(
+    await askUser(big, { command: process.execPath, args: [FAKE, "crash"] }),
+    "refuse",
+  );
+});
+
+// Regression. Unbounded stdout is a crash risk in its own right: past V8's max
+// string length the concatenation throws from inside the "data" handler, which
+// runs on its own event-loop turn and escapes the Promise executor — an
+// uncaught exception that crashes the hook and fails OPEN.
+test("a renderer flooding stdout is cut off and fails closed", async () => {
+  const started = Date.now();
+  const choice = await askUser(job, {
+    command: process.execPath, args: [FAKE, "flood"], timeoutMs: 30_000,
+  });
+  assert.equal(choice, "refuse");
+  assert.ok(Date.now() - started < 10_000, "should refuse on the cap, not wait for the timeout");
+});
 ```
 
 - [ ] **Step 2: Write the fake renderer fixture**
@@ -708,6 +955,7 @@ test("a hung renderer is killed and fails closed", async () => {
 ```javascript
 // tests/fixtures/fake-renderer.mjs
 const mode = process.argv[2];
+if (mode === "flood") { setInterval(() => process.stdout.write("x".repeat(8192)), 1); }
 if (mode === "crash") process.exit(3);
 if (mode === "garbage") { process.stdout.write("not json at all"); process.exit(0); }
 if (mode === "bogus-choice") { process.stdout.write(JSON.stringify({ choice: "maybe" })); process.exit(0); }
@@ -727,6 +975,14 @@ Expected: FAIL — module not found
 import { spawn } from "node:child_process";
 
 export const RENDER_TIMEOUT_MS = 120_000;
+
+// A real answer is `{"choice":"proceed"}` — a few dozen bytes. Anything wildly
+// past that is a malfunctioning renderer, and letting `out` grow unbounded is
+// itself a crash risk: past V8's max string length `out += chunk` throws a
+// RangeError from inside the "data" handler, which runs on its own event-loop
+// turn and so escapes the Promise executor entirely. That is an uncaught
+// exception, which crashes the hook and fails OPEN.
+export const MAX_OUTPUT_BYTES = 64 * 1024;
 
 // Every failure path returns "refuse". A gate that fails open silently hands
 // Claude unrestricted tool access, which is worse than the plugin not working.
@@ -751,8 +1007,25 @@ export function askUser(job, { command, args = [], timeoutMs = RENDER_TIMEOUT_MS
     const timer = setTimeout(() => finish("refuse"), timeoutMs);
 
     let out = "";
-    child.stdout.on("data", (chunk) => { out += chunk; });
+    child.stdout.setEncoding("utf8");     // decode across chunk boundaries
+    child.stdout.on("data", (chunk) => {
+      if (out.length > MAX_OUTPUT_BYTES) return;   // already refusing; stop growing
+      out += chunk;
+      if (out.length > MAX_OUTPUT_BYTES) finish("refuse");
+    });
     child.on("error", () => finish("refuse"));
+    // A renderer that exits before draining stdin makes the write fail
+    // asynchronously (EPIPE/EOF). Streams emit that as an "error" event, which
+    // the try/catch below cannot see — unhandled, it is an uncaught exception
+    // that crashes the hook and fails OPEN. Verified: without this handler, a
+    // large job plus a fast-exiting renderer takes the whole process down.
+    //
+    // It deliberately does NOT resolve. A renderer that answered and exited
+    // before draining a large job still gave the user's real answer, and the
+    // close handler below honours it; refusing here would race that and throw
+    // the answer away. If the write failed and the child then hangs, the
+    // timeout is what catches it.
+    child.stdin.on("error", () => { /* swallow: close decides the outcome */ });
     child.on("close", (code) => {
       if (code !== 0) return finish("refuse");
       try {
@@ -864,6 +1137,61 @@ test("an ungated tool passes through untouched", async () => {
   assert.deepEqual(output, {});
   assert.deepEqual(nextState, active);
 });
+
+// Regressions. decide is the outermost decision boundary: anything that is not
+// an explicit "proceed" must refuse, and nothing here may throw. A value
+// falling through to allow() is the fail-open case the plugin exists to prevent.
+test("only the exact string proceed is allowed to proceed", async () => {
+  const call = { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {} };
+  for (const junk of [undefined, null, "", "Proceed", "PROCEED", "yes", 1, true, {}]) {
+    const { output } = await decide(call, active, async () => junk);
+    assert.equal(output.hookSpecificOutput?.permissionDecision, "deny",
+      `ask() returning ${JSON.stringify(junk)} must deny, not allow`);
+  }
+});
+
+test("a rejecting ask denies instead of crashing the hook", async () => {
+  const call = { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {} };
+  const boom = async () => { throw new Error("renderer exploded"); };
+  const { output, nextState } = await decide(call, active, boom);
+  assert.equal(output.hookSpecificOutput.permissionDecision, "deny");
+  assert.equal(nextState.routeActive, false);
+});
+
+// Notification hooks have NO decision control in Claude Code — they cannot block
+// or modify behaviour. So the box on a Notification decides only the route's own
+// fate, and the hook output is always {}. Both branches were previously untested.
+test("Notification proceed keeps the route running and emits no decision", async () => {
+  const { output, nextState } = await decide(
+    { hook_event_name: "Notification" }, active, proceed);
+  assert.deepEqual(output, {}, "Notification output must carry no decision");
+  assert.equal(nextState.routeActive, true);
+});
+
+test("Notification refuse ends the route and emits no decision", async () => {
+  const { output, nextState } = await decide(
+    { hook_event_name: "Notification" }, active, refuse);
+  assert.deepEqual(output, {});
+  assert.equal(nextState.routeActive, false);
+});
+
+test("refusing at the ceiling ends the route and does not block", async () => {
+  const { output, nextState } = await decide(
+    { hook_event_name: "Stop", next: "keep going" },
+    { routeActive: true, autoContinues: 25 }, refuse);
+  assert.equal(output.decision, undefined, "a refusal must never block-and-continue");
+  assert.equal(nextState.routeActive, false);
+});
+
+test("decide never throws on a malformed payload or state", async () => {
+  for (const payload of [null, undefined, 42, "nope", []]) {
+    await assert.doesNotReject(() => decide(payload, active, proceed));
+  }
+  const call = { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {} };
+  for (const state of [null, undefined, 42, "nope"]) {
+    await assert.doesNotReject(() => decide(call, state, proceed));
+  }
+});
 ```
 
 - [ ] **Step 3: Write the implementation**
@@ -882,7 +1210,27 @@ const deny = () => ({
                         permissionDecisionReason: "Refused. The route ends here." },
 });
 
+// Only the exact string "proceed" proceeds. Anything else — undefined, null, a
+// garbage value from a future renderer — is a refusal. Never let an unexpected
+// value fall through to allow(): that is the fail-open case this whole module
+// exists to prevent, and decide must be safe without trusting its caller.
+const normalise = (choice) => (choice === "proceed" ? "proceed" : "refuse");
+
+// A rejecting ask must not propagate: an unhandled rejection here crashes the
+// hook, and a crashed PreToolUse hook can let the tool call through.
+const safeAsk = async (ask, job) => {
+  try {
+    return normalise(await ask(job));
+  } catch {
+    return "refuse";
+  }
+};
+
 export async function decide(payload, state, ask) {
+  // decide is the outermost decision boundary; it must never throw.
+  if (!payload || typeof payload !== "object") return { output: {}, nextState: state };
+  if (!state || typeof state !== "object") return { output: {}, nextState: state };
+
   const job = buildJob(payload, state);
 
   // Silent auto-continue: a Stop that carries a NEXT marker and is under the
@@ -898,11 +1246,11 @@ export async function decide(payload, state, ask) {
   }
 
   if (job.kind === "complete") {
-    await ask(job);                                   // dismissal only
+    await safeAsk(ask, job);                          // dismissal only
     return { output: {}, nextState: { ...state, routeActive: false } };
   }
 
-  const choice = await ask(job);
+  const choice = await safeAsk(ask, job);
 
   if (choice === "refuse") {
     const ended = { ...state, routeActive: false };
@@ -938,17 +1286,44 @@ import { decide } from "../src/decide.mjs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 
+import { createRequire } from "node:module";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RENDERER = join(HERE, "..", "renderer", "popup", "main.mjs");
 
+// The whole read is guarded, not just the parse: a stream "error" during
+// iteration (pipe reset, abnormal parent teardown) throws outside any JSON
+// concern, and an uncaught throw here crashes the hook before a decision
+// exists at all.
 const readStdin = async () => {
-  let raw = "";
-  for await (const chunk of process.stdin) raw += chunk;
-  try { return JSON.parse(raw); } catch { return null; }
+  try {
+    let raw = "";
+    for await (const chunk of process.stdin) raw += chunk;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+// Never shell out to `npx`. On a machine without Electron installed it either
+// attempts a large registry fetch or hangs on a non-TTY prompt — from inside a
+// hook that fires on every gated tool call. Resolve the local binary instead,
+// and refuse outright if it is not there. The env override exists so gate.mjs
+// can be driven with a stub renderer in tests.
+const resolveRenderer = () => {
+  const override = process.env.WEIRD_ROUTE_RENDERER_CMD;
+  if (override) {
+    return { command: override, args: [...(process.env.WEIRD_ROUTE_RENDERER_ARGS?.split(" ") ?? []), RENDERER] };
+  }
+  try {
+    return { command: createRequire(import.meta.url)("electron"), args: [RENDERER] };
+  } catch {
+    return null;                            // not installed: every gate refuses
+  }
 };
 
 const payload = await readStdin();
-if (!payload) process.exit(0);              // unparseable payload: do nothing
+if (!payload || typeof payload !== "object") process.exit(0);
 
 if (payload.hook_event_name === "Stop") {
   payload.next = extractNext(await readLastAssistantText(payload.transcript_path));
@@ -957,11 +1332,30 @@ if (payload.hook_event_name === "Stop") {
 const sessionId = payload.session_id ?? "default";
 const state = await loadState(sessionId);
 
-const ask = (job) => askUser(job, { command: "npx", args: ["electron", RENDERER] });
-const { output, nextState } = await decide(payload, state, ask);
+const renderer = resolveRenderer();
+const ask = renderer ? (job) => askUser(job, renderer) : async () => "refuse";
 
-await saveState(sessionId, nextState);
+let output = {};
+let nextState = state;
+try {
+  ({ output, nextState } = await decide(payload, state, ask));
+} catch {
+  // decide is guarded and should not reach here. If it ever does, emit nothing
+  // and let Claude Code's own permission flow stand — never a bare allow.
+  output = {};
+  nextState = { ...state, routeActive: false };
+}
+
+// Deliver the decision BEFORE persisting. saveState touches the filesystem and
+// can fail on a full disk, a permission error, or Windows file-lock contention
+// between concurrent hook invocations. A throw there would crash the hook after
+// the correct answer was already computed but before it was ever printed —
+// which is the fail-open case. A stale counter is the cheaper loss.
 if (Object.keys(output).length) process.stdout.write(JSON.stringify(output));
+try {
+  await saveState(sessionId, nextState);
+} catch { /* decision already delivered */ }
+
 process.exit(0);
 ```
 
