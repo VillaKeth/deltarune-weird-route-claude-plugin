@@ -6,9 +6,23 @@ import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RENDERER = join(HERE, "..", "renderer", "popup", "main.mjs");
+
+// Test-only override args. A bare split(" ") cannot express a path containing a
+// space — and this project's own checkout path has three of them, so every
+// fixture under the repo was unreachable through the override. JSON array is the
+// real form; the space-split remains as a convenience for simple values.
+const parseArgs = (raw) => {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map(String);
+  } catch { /* not JSON — fall through */ }
+  return raw.split(" ").filter(Boolean);
+};
 
 // The whole read is guarded, not just the parse: a stream "error" during
 // iteration (pipe reset, abnormal parent teardown) throws outside any JSON
@@ -32,8 +46,14 @@ const readStdin = async () => {
 const resolveRenderer = () => {
   const override = process.env.WEIRD_ROUTE_RENDERER_CMD;
   if (override) {
-    return { command: override, args: [...(process.env.WEIRD_ROUTE_RENDERER_ARGS?.split(" ") ?? []), RENDERER] };
+    return { command: override, args: [...parseArgs(process.env.WEIRD_ROUTE_RENDERER_ARGS), RENDERER] };
   }
+  // The entry file is checked before Electron is ever spawned. Measured: with
+  // Electron installed but main.mjs absent, Electron does NOT exit — it hangs,
+  // and the gated call took 121 s to resolve against the 120 s timeout. It still
+  // failed closed, but two minutes per tool call is indistinguishable from a
+  // hung terminal. A missing renderer must refuse in milliseconds.
+  if (!existsSync(RENDERER)) return null;
   try {
     return { command: createRequire(import.meta.url)("electron"), args: [RENDERER] };
   } catch {
