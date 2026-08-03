@@ -5,10 +5,15 @@ export const CONSEQUENTIAL_TOOLS = ["Write", "Edit", "Bash", "WebFetch", "Task"]
 
 const basename = (p = "") => String(p).split(/[\\/]/).pop() || String(p);
 
-export function describeTool(toolName, toolInput = {}) {
+export function describeTool(toolName, toolInput) {
+  // A default parameter only fires for undefined, never for an explicit null.
+  // Hook payloads are external input, and this module sits on the fail-closed
+  // path: a throw here crashes the hook, and a crashed PreToolUse hook can let
+  // the tool call through unsupervised — the exact inversion of the invariant.
+  const input = toolInput && typeof toolInput === "object" ? toolInput : {};
   switch (toolName) {
-    case "Write":  return `* it wants to write ${basename(toolInput.file_path)}.`;
-    case "Edit":   return `* it wants to change ${basename(toolInput.file_path)}.`;
+    case "Write":  return `* it wants to write ${basename(input.file_path)}.`;
+    case "Edit":   return `* it wants to change ${basename(input.file_path)}.`;
     case "Bash":   return `* it wants to run a command.`;
     case "WebFetch": return `* it wants to reach the outside.`;
     case "Task":   return `* it wants to send someone else.`;
@@ -23,6 +28,10 @@ const speak = (...paragraphs) =>
   paragraphs.flatMap((p) => wrapLines(p)).slice(0, MAX_ROWS);
 
 export function buildJob(payload, state) {
+  // Outermost safety boundary: never throw. Returning null means "no box
+  // warranted", which leaves Claude Code's own permission flow in charge.
+  if (!payload || typeof payload !== "object") return null;
+  if (!state || typeof state !== "object") return null;
   if (!state.routeActive) return null;
 
   if (payload.hook_event_name === "PreToolUse") {

@@ -62,3 +62,46 @@ test("nothing gates when the route is not running", () => {
   const idle = { routeActive: false, autoContinues: 0 };
   assert.equal(buildJob({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {} }, idle), null);
 });
+
+test("buildJob never throws on a malformed payload", () => {
+  const payloads = [
+    { hook_event_name: "PreToolUse", tool_name: "Edit" },
+    { hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: null },
+    { hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: "nope" },
+    { hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: null } },
+    { hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: "" } },
+    { hook_event_name: "PreToolUse", tool_name: null, tool_input: {} },
+    { hook_event_name: "Nonsense" },
+    {},
+    null,
+    undefined,
+  ];
+  for (const payload of payloads) {
+    assert.doesNotThrow(() => buildJob(payload, active), `threw on ${JSON.stringify(payload)}`);
+  }
+});
+
+test("buildJob never throws on a malformed state", () => {
+  const call = { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {} };
+  for (const state of [null, undefined, 42, "nope", []]) {
+    assert.doesNotThrow(() => buildJob(call, state), `threw on state ${JSON.stringify(state)}`);
+  }
+});
+
+test("describeTool survives a null tool_input", () => {
+  for (const tool of CONSEQUENTIAL_TOOLS) {
+    assert.doesNotThrow(() => describeTool(tool, null), `${tool} threw on null input`);
+    assert.doesNotThrow(() => describeTool(tool, undefined), `${tool} threw on undefined input`);
+  }
+});
+
+test("a very long path still fits three rows inside the box", () => {
+  const job = buildJob({
+    hook_event_name: "PreToolUse", tool_name: "Write",
+    tool_input: { file_path: `C:/x/${"Segment".repeat(30)}.ts` },
+  }, active);
+  assert.ok(job.lines.length <= 3, `${job.lines.length} rows`);
+  for (const line of job.lines) {
+    assert.ok(line.length <= MAX_CHARS.withPortrait, `"${line}" is ${line.length} chars`);
+  }
+});
