@@ -59,3 +59,16 @@ test("a huge payload to a crashing renderer still fails closed", async () => {
     "refuse",
   );
 });
+
+// Regression. Unbounded stdout is a crash risk in its own right: past V8's max
+// string length the concatenation throws from inside the "data" handler, which
+// runs on its own event-loop turn and escapes the Promise executor — an
+// uncaught exception that crashes the hook and fails OPEN.
+test("a renderer flooding stdout is cut off and fails closed", async () => {
+  const started = Date.now();
+  const choice = await askUser(job, {
+    command: process.execPath, args: [FAKE, "flood"], timeoutMs: 30_000,
+  });
+  assert.equal(choice, "refuse");
+  assert.ok(Date.now() - started < 10_000, "should refuse on the cap, not wait for the timeout");
+});
