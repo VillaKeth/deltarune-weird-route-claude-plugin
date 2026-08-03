@@ -17,7 +17,7 @@ const JOB = {
 const press = (keys, job = JOB, extraEnv = {}) => new Promise((resolve, reject) => {
   const electron = createRequire(import.meta.url)("electron");
   const child = spawn(electron, ["renderer/popup/main.mjs"], {
-    env: { ...process.env, WEIRD_ROUTE_KEYS: keys.join(","), WEIRD_ROUTE_CAPTURE: "", ...extraEnv },
+    env: { ...process.env, WEIRD_ROUTE_DEV: "1", WEIRD_ROUTE_KEYS: keys.join(","), WEIRD_ROUTE_CAPTURE: "", ...extraEnv },
     stdio: ["pipe", "pipe", "pipe"],
   });
   let out = "", err = "";

@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename, unlink } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,22 +15,66 @@ const pathFor = (sessionId, dir) => join(dir, `${sessionId}.json`);
 const sanitiseCount = (value) =>
   Number.isInteger(value) && value >= 0 ? value : 0;
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const shape = (parsed) => {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return fresh();
+  return {
+    routeActive: !!parsed.routeActive,
+    autoContinues: sanitiseCount(parsed.autoContinues),
+  };
+};
+
+// Claude Code fires hooks concurrently — two tool calls in one assistant block
+// is ordinary and encouraged. A read landing inside another invocation's write
+// used to observe an empty or half-written file, and mapping that onto fresh()
+// reports routeActive:false for a route that is on. Measured before the fix:
+// 1936 of 14726 contended reads (13.1%) saw the route as OFF while the file on
+// disk said ON. Each one skipped a gate AND then persisted the route as dead.
+//
+// saveState below is atomic, so a torn read is no longer possible; the retry
+// here covers the Windows sharing violation that can still surface while a
+// rename is in flight. Only a genuinely absent file yields fresh() without a
+// fight — every other error is transient until proven otherwise, because
+// guessing "route off" is the fail-open direction.
 export async function loadState(sessionId, dir = DEFAULT_DIR) {
-  try {
-    const parsed = JSON.parse(await readFile(pathFor(sessionId, dir), "utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return fresh();
-    return {
-      routeActive: !!parsed.routeActive,
-      autoContinues: sanitiseCount(parsed.autoContinues),
-    };
-  } catch {
-    return fresh();
+  const path = pathFor(sessionId, dir);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      return shape(JSON.parse(await readFile(path, "utf8")));
+    } catch (e) {
+      if (e?.code === "ENOENT") return fresh();      // no session yet: genuinely fresh
+      if (attempt === 4) return fresh();             // give up, but only after trying
+      await sleep(5 * (attempt + 1));
+    }
   }
+  return fresh();
 }
 
+// Write to a unique temp file and rename over the target. rename is atomic on
+// both NTFS and POSIX, so a concurrent reader sees either the whole old file or
+// the whole new one — never a truncated one. A plain writeFile opens O_TRUNC
+// and then writes, which leaves the file empty for as long as the write takes.
 export async function saveState(sessionId, state, dir = DEFAULT_DIR) {
   await mkdir(dir, { recursive: true });
-  await writeFile(pathFor(sessionId, dir), JSON.stringify(state), "utf8");
+  const target = pathFor(sessionId, dir);
+  const tmp = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  await writeFile(tmp, JSON.stringify(state), "utf8");
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await rename(tmp, target);
+      } catch (e) {
+        // Windows can refuse the replace while another process has the target
+        // open for reading. That is transient; a real error still surfaces.
+        if (attempt === 4 || (e?.code !== "EPERM" && e?.code !== "EBUSY" && e?.code !== "EACCES")) throw e;
+        await sleep(5 * (attempt + 1));
+      }
+    }
+  } catch (e) {
+    await unlink(tmp).catch(() => {});    // never leave temp files behind
+    throw e;
+  }
 }
 
 export const bump = (state) => ({

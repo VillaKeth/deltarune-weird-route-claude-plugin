@@ -43,7 +43,11 @@ test("Proceed on the start box turns the route on; Refuse leaves it off", async 
   const started = await decide(prompt("weird route"), OFF, async () => "proceed");
   assert.equal(started.nextState.routeActive, true);
   assert.equal(started.nextState.autoContinues, 0);
-  assert.deepEqual(started.output, {}, "UserPromptSubmit carries no decision");
+  // UserPromptSubmit carries no permission decision, but it is the only channel
+  // that can reach the model, so the NEXT: convention rides out with it.
+  assert.equal(started.output.hookSpecificOutput.hookEventName, "UserPromptSubmit");
+  assert.match(started.output.hookSpecificOutput.additionalContext, /NEXT:/);
+  assert.equal(started.output.hookSpecificOutput.permissionDecision, undefined);
 
   const declined = await decide(prompt("weird route"), OFF, async () => "refuse");
   assert.equal(declined.nextState.routeActive, false);

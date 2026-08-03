@@ -64,15 +64,24 @@ seconds instead of on a real gate:
 $env:TEST_MODE = "1"; claude
 ```
 
-Test seams, all inert in production:
+Test seams:
 
-| Variable | Effect |
-|---|---|
-| `WEIRD_ROUTE_RENDERER_CMD` / `_ARGS` | Run a stub instead of Electron |
-| `WEIRD_ROUTE_RENDERER_ENTRY` | Point the gate at a different renderer entry |
-| `WEIRD_ROUTE_CAPTURE` | Screenshot the window to a PNG and exit |
-| `WEIRD_ROUTE_KEYS` | Replay real key events through the window |
-| `WEIRD_ROUTE_FAILSAFE_MS` | Shorten the 120 s teardown timer |
+| Variable | Effect | Can force a Proceed |
+|---|---|---|
+| `WEIRD_ROUTE_DEV=1` | Unlocks the two seams below. Prints a warning to stderr. | — |
+| `WEIRD_ROUTE_RENDERER_CMD` / `_ARGS` | Run a stub instead of Electron | **yes** — needs `_DEV=1` |
+| `WEIRD_ROUTE_KEYS` | Replay real key events through the window | **yes** — needs `_DEV=1` |
+| `WEIRD_ROUTE_RENDERER_ENTRY` | Point the gate at a different renderer entry | no — a bad path refuses |
+| `WEIRD_ROUTE_CAPTURE` | Screenshot the window to a PNG and exit | no — always refuses |
+| `WEIRD_ROUTE_FAILSAFE_MS` | Shorten the 120 s teardown timer | no — only refuses sooner |
+| `TEST_MODE` | Gate every tool regardless of the route flag | no — only gates more |
+
+The first two can manufacture a Proceed with no window ever appearing, which is a
+working bypass of the entire gate. They are inert unless `WEIRD_ROUTE_DEV=1` is also
+set, and announce themselves on stderr when active. This matters because Claude Code's
+settings support an `env` block injected into every hook — without the extra flag, one
+approved write to `.claude/settings.local.json` would disable the gate permanently and
+silently.
 
 ## How it works
 

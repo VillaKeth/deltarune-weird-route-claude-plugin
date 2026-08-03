@@ -5,7 +5,7 @@ const allow = () => ({
   hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow",
                         permissionDecisionReason: "Proceed." },
 });
-const deny = () => ({
+export const deny = () => ({
   hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny",
                         permissionDecisionReason: "Refused. The route ends here." },
 });
@@ -14,6 +14,26 @@ const deny = () => ({
 // garbage value from a future renderer — is a refusal. Never let an unexpected
 // value fall through to allow(): that is the fail-open case this whole module
 // exists to prevent, and decide must be safe without trusting its caller.
+// The spec assumes Claude "is instructed to end turns with a single NEXT: line",
+// but nothing ever issued that instruction. Without it Claude never emits the
+// marker, every turn end reads as route-complete, and the route dies after a
+// single turn — taking the auto-continue path, the 25-continue ceiling and the
+// whole transcript reader with it. UserPromptSubmit's additionalContext is the
+// one channel that can reach the model, so the instruction rides along with
+// every prompt while the route is live.
+export const NEXT_INSTRUCTION =
+  "The Deltarune Weird Route is active. If work remains at the end of your turn, " +
+  "make the LAST line of your reply exactly `NEXT: <one short line>` naming the " +
+  "single next step you intend to take. Omit it only when nothing is left to do. " +
+  "It is read by the route gate, never by the user.";
+
+const withInstruction = () => ({
+  hookSpecificOutput: {
+    hookEventName: "UserPromptSubmit",
+    additionalContext: NEXT_INSTRUCTION,
+  },
+});
+
 const normalise = (choice) => (choice === "proceed" ? "proceed" : "refuse");
 
 // A rejecting ask must not propagate: an unhandled rejection here crashes the
@@ -42,6 +62,11 @@ export async function decide(payload, state, ask) {
         nextState: bump(state),
       };
     }
+    // Route already running: no box, but keep the NEXT: convention in front of
+    // the model, or the very next turn end looks like completion.
+    if (payload.hook_event_name === "UserPromptSubmit" && state.routeActive) {
+      return { output: withInstruction(), nextState: state };
+    }
     return { output: {}, nextState: state };
   }
 
@@ -54,7 +79,10 @@ export async function decide(payload, state, ask) {
   // simply leaves it off, so declining the invitation is a no-op, not an abort.
   if (job.kind === "start") {
     const started = (await safeAsk(ask, job)) === "proceed";
-    return { output: {}, nextState: { ...state, routeActive: started, autoContinues: 0 } };
+    return {
+      output: started ? withInstruction() : {},
+      nextState: { ...state, routeActive: started, autoContinues: 0 },
+    };
   }
 
   const choice = await safeAsk(ask, job);

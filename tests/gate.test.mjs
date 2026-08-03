@@ -21,6 +21,7 @@ const FIXTURE = join(HERE, "fixtures", "fake-renderer.mjs");
 // The override args are JSON precisely because FIXTURE's absolute path contains
 // spaces on any normal checkout of this project.
 const renderer = (mode) => ({
+  WEIRD_ROUTE_DEV: "1",                 // stub seams are inert without this
   WEIRD_ROUTE_RENDERER_CMD: process.execPath,
   WEIRD_ROUTE_RENDERER_ARGS: JSON.stringify([FIXTURE, mode]),
 });
@@ -200,12 +201,83 @@ test("an unresolvable renderer denies immediately instead of hanging", async (t)
   assert.ok(elapsed < 30_000, `took ${elapsed}ms — a missing renderer must fail fast`);
 });
 
-test("garbage on stdin exits cleanly without a decision", async () => {
+test("garbage on stdin exits cleanly and denies rather than staying silent", async () => {
+  // An unparseable payload might have been a PreToolUse. Silence sends that
+  // tool call to the normal permission flow, which under bypassPermissions is
+  // an allow — the exact fail-open this module exists to prevent.
   for (const payload of ["", "not json", "null", "42", '"a string"']) {
     const r = await run(payload, renderer("refuse"));
     assert.equal(r.code, 0, `payload ${JSON.stringify(payload)} exited ${r.code}`);
-    assert.equal(r.out, "", `payload ${JSON.stringify(payload)} emitted ${r.out}`);
+    assert.equal(JSON.parse(r.out).hookSpecificOutput.permissionDecision, "deny",
+      `payload ${JSON.stringify(payload)} did not deny`);
   }
+});
+
+test("a Stop that cannot persist its counter withholds the block entirely", async (t) => {
+  // The auto-continue counter is the ONLY bound on free-running. If the bump
+  // cannot be written, the counter never advances, atLimit never trips, and
+  // the 25-continue ceiling stops existing. Refusing to continue is the safe
+  // direction, so the block must not be emitted at all.
+  const id = `test-gate-blockperm-${process.pid}`;
+  const file = join(STATE_DIR, `${id}.json`);
+  t.after(async () => { await chmod(file, 0o666).catch(() => {}); await cleanup(id); });
+
+  await seed(id, { routeActive: true, autoContinues: 3 });
+  await chmod(file, 0o444);
+
+  let readOnly = true;
+  try { await writeFile(file, "x", "utf8"); readOnly = false; } catch { /* expected */ }
+  if (!readOnly) return t.skip("filesystem ignores the read-only bit here");
+
+  const transcript = await writeTranscript("blockperm", "ok\nNEXT: keep refactoring");
+  const r = await run({ hook_event_name: "Stop", session_id: id, transcript_path: transcript },
+                      renderer("refuse"));
+
+  assert.equal(r.code, 0);
+  assert.equal(r.out, "", "an uncountable auto-continue must not be granted");
+  assert.equal((await stateOf(id)).autoContinues, 3, "the counter did not move");
+});
+
+test("the NEXT: convention is pushed to the model while the route is live", async (t) => {
+  // Nothing else instructs it. Without this the marker never appears, every
+  // turn end reads as route-complete, and the route dies after one turn.
+  const id = `test-gate-instr-${process.pid}`;
+  t.after(() => cleanup(id));
+  await seed(id, { routeActive: true, autoContinues: 0 });
+
+  const r = await run({ hook_event_name: "UserPromptSubmit", session_id: id, prompt: "carry on" },
+                      renderer("refuse"));
+
+  const ctx = JSON.parse(r.out).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /NEXT:/, "the instruction must name the marker");
+  assert.equal((await stateOf(id)).routeActive, true, "and must not disturb the route");
+});
+
+test("no instruction leaks into prompts while the route is off", async (t) => {
+  const id = `test-gate-noinstr-${process.pid}`;
+  t.after(() => cleanup(id));
+  await seed(id, { routeActive: false, autoContinues: 0 });
+
+  const r = await run({ hook_event_name: "UserPromptSubmit", session_id: id, prompt: "hello" },
+                      renderer("refuse"));
+  assert.equal(r.out, "");
+});
+
+test("dev seams are inert without WEIRD_ROUTE_DEV", async (t) => {
+  // WEIRD_ROUTE_RENDERER_CMD can manufacture a Proceed. Reachable through
+  // Claude Code's settings `env` block, so one approved Write would otherwise
+  // disable the gate permanently and silently.
+  const id = `test-gate-seam-${process.pid}`;
+  t.after(() => cleanup(id));
+  await seed(id, { routeActive: true, autoContinues: 0 });
+
+  const r = await run(
+    { hook_event_name: "PreToolUse", session_id: id, tool_name: "Write", tool_input: { file_path: "a.txt" } },
+    { WEIRD_ROUTE_RENDERER_CMD: process.execPath,
+      WEIRD_ROUTE_RENDERER_ARGS: JSON.stringify([FIXTURE, "proceed"]) });
+
+  assert.equal(JSON.parse(r.out).hookSpecificOutput.permissionDecision, "deny",
+    "a stub renderer must not be able to force a Proceed without the dev flag");
 });
 
 test("a failing saveState still delivers the decision", async (t) => {

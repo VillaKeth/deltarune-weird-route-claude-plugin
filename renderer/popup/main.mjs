@@ -217,7 +217,11 @@ ipcMain.on("ready", async () => {
   // answer exactly as a keypress does. Without this the interaction is only
   // ever verified by hand, and "the reducer is correct" is not the same claim
   // as "the app responds to the keyboard".
-  if (process.env.WEIRD_ROUTE_KEYS) {
+  // Gated behind an explicit dev flag: the default cursor is Proceed, so
+  // WEIRD_ROUTE_KEYS=Z,Z,Z makes every box self-confirm 240 ms after opening.
+  // That is a working gate bypass if it can be set from the environment alone.
+  if (process.env.WEIRD_ROUTE_KEYS && process.env.WEIRD_ROUTE_DEV === "1") {
+    process.stderr.write("weird-route: DEV key replay active\n");
     for (const code of process.env.WEIRD_ROUTE_KEYS.split(",")) {
       await sleep(80);
       if (answered || win.isDestroyed()) return;
