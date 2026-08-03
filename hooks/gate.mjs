@@ -9,11 +9,23 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+
+// Which renderer draws the box. Both speak the same stdin/stdout contract, so
+// this is the only line that knows there is more than one.
+//
+//   popup  (default)  a frameless Electron window
+//   inline            the terminal Claude Code is already running in
+//
+// Anything unrecognised falls back to the popup rather than refusing: the
+// choice of renderer is cosmetic, and a typo here should not gate every tool
+// call for the rest of the session.
+const INLINE = process.env.WEIRD_ROUTE_RENDERER === "inline";
+
 // Overridable so the missing-entry path is testable. Without a seam, the only
 // way to exercise it is to delete the real renderer, and a test that depended
 // on that file not existing yet broke the moment Task 7 created it.
 const RENDERER = process.env.WEIRD_ROUTE_RENDERER_ENTRY
-  || join(HERE, "..", "renderer", "popup", "main.mjs");
+  || join(HERE, "..", "renderer", INLINE ? "inline" : "popup", "main.mjs");
 
 // Test-only override args. A bare split(" ") cannot express a path containing a
 // space — and this project's own checkout path has three of them, so every
@@ -81,6 +93,10 @@ const resolveRenderer = () => {
   // failed closed, but two minutes per tool call is indistinguishable from a
   // hung terminal. A missing renderer must refuse in milliseconds.
   if (!existsSync(RENDERER)) return null;
+  // The inline renderer is plain Node drawing to the console this process is
+  // already attached to. No Electron, and nothing to resolve that could be
+  // missing — process.execPath is the interpreter already running this hook.
+  if (INLINE) return { command: process.execPath, args: [RENDERER] };
   try {
     return { command: createRequire(import.meta.url)("electron"), args: [RENDERER] };
   } catch {

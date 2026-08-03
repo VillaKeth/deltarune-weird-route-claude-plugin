@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decodePng } from "../tools/png.mjs";
+import { decodePng } from "../src/png.mjs";
 import { BOX, innerRight, rowY, OPTION_X } from "../src/geometry.mjs";
 
 const SCALE = BOX.scale;

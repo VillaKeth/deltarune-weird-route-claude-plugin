@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "box": "electron renderer/popup/main.mjs"
+    "box": "electron renderer/popup/main.mjs",
+    "inline": "node tools/show-inline.mjs"
   },
   "devDependencies": {
     "electron": "^43.2.0"

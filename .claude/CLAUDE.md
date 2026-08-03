@@ -39,6 +39,27 @@ slots. Drawing it last hides every glyph.
 `rgb(0,0,0)` outline. Never apply a CSS tint or filter — it erases the outlines. The
 corner dots are already baked into `border.png`; do not draw them again.
 
+**A piped hook can still reach the real console.** `\\.\CONOUT$` and `\\.\CONIN$`
+on Windows, `/dev/tty` elsewhere — verified by reading the console buffer back and
+finding this session's own output in it. This is why phase 2 needs no PTY, no
+wrapper process and no native dependency. Two non-guessable details: `CONIN$` must
+be opened **`"r+"`** because `setRawMode` calls `SetConsoleMode`, which needs write
+access and fails `EPERM` on a read-only handle; and raw mode must be set **before**
+attaching a `data` listener, because a listener on a cooked console blocks the
+event loop on a line read that never returns — which also stops the failsafe timer.
+
+**Claude Code repaints over anything drawn to its console.** The box does not fight
+for the screen; it redraws on a 100 ms heartbeat, faster than it can be clobbered.
+
+**`src/cells.mjs` owns cell values the way `geometry.mjs` owns pixel values.** The
+two spaces do not share a scale — text is 8 px per column but the sprite is 1 px per
+column — so only the *relationships* cross over, never the numbers.
+
+**A terminal renderer must restore the terminal.** Alternate screen off, cursor
+back, raw mode off, on every exit path. `renderer-client` kills at 120 s with
+SIGKILL, which cannot be caught, so the inline failsafe fires at 110 s to win that
+race — a process killed mid-scene leaves the user in a raw alternate screen.
+
 **Never `await app.whenReady()` at the top level of the ESM main process.** Electron
 withholds `ready` until the entry module finishes evaluating, so it deadlocks: the
 process sits forever with no window, no error, and no output. Use `.then()`.

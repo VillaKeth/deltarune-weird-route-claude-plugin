@@ -77,6 +77,41 @@ was asked, stops Claude, plays the abort jingle, and gives you back a normal pro
 `Z` advances her line, then confirms. `←` `→` move the soul. `X` goes back to her
 line. `Esc` always closes the window and refuses. The box can also be dragged.
 
+## Two renderers
+
+The box can be drawn either in its own window or in the terminal you are already
+sitting in. Both speak the same contract, so switching is one environment variable.
+
+```powershell
+$env:WEIRD_ROUTE_RENDERER = "inline"     # in the terminal
+$env:WEIRD_ROUTE_RENDERER = "popup"      # the Electron window (default)
+```
+
+| | popup | inline |
+|---|---|---|
+| Needs Electron | yes | no |
+| Sound effects | yes | no — a terminal has no audio |
+| Noelle | the real PNG | the real PNG, as half-block cells |
+| Covers your work | a window on top | takes the screen for the scene, then gives it back |
+
+The inline renderer needs no wrapper process, no PTY and no native dependency. A
+hook's stdio is piped, but the process can still open the real console directly —
+`\\.\CONOUT$` and `\\.\CONIN$` on Windows, `/dev/tty` elsewhere — so it draws to
+the terminal Claude Code is running in without proxying anything.
+
+She is drawn at full resolution where there is room, using `▀` with a foreground
+and background colour so one cell carries two stacked pixels and the sprite keeps
+its aspect. In a smaller terminal she shrinks by whole numbers only, because the
+faces are two-tone line art and a fractional resample turns the one-pixel outlines
+grey. Below a quarter size she is dropped rather than smudged, and the text — the
+part carrying the actual decision — keeps its full width.
+
+```powershell
+node tools/show-inline.mjs               # see it, no gate involved
+node tools/show-inline.mjs --beat 1      # her line rather than the choice
+node tools/show-inline.mjs --plain       # no colour, for reading structure
+```
+
 ## Where the box appears
 
 Dead centre is the game-accurate placement, and it lands on top of whatever you are
@@ -92,7 +127,7 @@ boxes cascade from there so none can hide underneath another.
 ## Develop
 
 ```powershell
-npm test                    # 129 tests, node --test
+npm test                    # 161 tests, node --test
 node tools/show-box.mjs     # see the box without a gate
 ```
 
@@ -109,9 +144,11 @@ Test seams:
 |---|---|---|
 | `WEIRD_ROUTE_DEV=1` | Unlocks the two seams below. Prints a warning to stderr. | — |
 | `WEIRD_ROUTE_RENDERER_CMD` / `_ARGS` | Run a stub instead of Electron | **yes** — needs `_DEV=1` |
-| `WEIRD_ROUTE_KEYS` | Replay real key events through the window | **yes** — needs `_DEV=1` |
+| `WEIRD_ROUTE_KEYS` | Replay real key events through either renderer | **yes** — needs `_DEV=1` |
+| `WEIRD_ROUTE_RENDERER` | `inline` or `popup` | no — both still ask |
 | `WEIRD_ROUTE_RENDERER_ENTRY` | Point the gate at a different renderer entry | no — a bad path refuses |
 | `WEIRD_ROUTE_CAPTURE` | Screenshot the window to a PNG and exit | no — always refuses |
+| `WEIRD_ROUTE_INLINE_CAPTURE` | Write inline frames to a file, touching no console | no — headless refuses |
 | `WEIRD_ROUTE_FAILSAFE_MS` | Shorten the 120 s teardown timer | no — only refuses sooner |
 | `TEST_MODE` | Gate every tool regardless of the route flag | no — only gates more |
 
@@ -129,13 +166,20 @@ silently.
 hooks/hooks.json        which events reach the gate, for a plugin install
 hooks/gate.mjs          UserPromptSubmit, PreToolUse, Stop, Notification enter here
 src/geometry.mjs        every pixel value, declared once
+src/cells.mjs           every cell value, derived from the pixel values
 src/nav.mjs             interaction rules, as pure functions
+src/scene.mjs           the inline scene, as a reducer
+src/keys.mjs            console bytes -> key names
+src/frame.mjs           the inline box, as strings
+src/sprite.mjs          a PNG -> half-block cells
+src/png.mjs             a dependency-free PNG decoder
 src/job.mjs             what Noelle says, and whether a box is warranted
 src/decide.mjs          choice -> hook decision
 src/state.mjs           route flag and the auto-continue counter
 src/transcript.mjs      harvests the NEXT: marker (a string read, never a model call)
 src/renderer-client.mjs spawns the renderer, enforces the timeout
 renderer/popup/         the Electron window
+renderer/inline/        the terminal takeover
 state/<session>.json    per-session route state
 ```
 
