@@ -275,10 +275,20 @@ test("dev seams are inert without WEIRD_ROUTE_DEV", async (t) => {
   t.after(() => cleanup(id));
   await seed(id, { routeActive: true, autoContinues: 0 });
 
+  // The entry points at a file that does not exist, which makes the two
+  // branches of resolveRenderer distinguishable without ever opening a window:
+  // if the override were honoured it returns first and the stub answers
+  // "proceed"; if it is ignored, the missing entry short-circuits to a refusal.
+  //
+  // The first version of this test omitted the entry, so the fall-through
+  // spawned a REAL Electron box on the developer's screen and sat there until
+  // a stray keystroke answered it — which is also how it went green as "allow".
+  // A test must never put a window in front of someone.
   const r = await run(
     { hook_event_name: "PreToolUse", session_id: id, tool_name: "Write", tool_input: { file_path: "a.txt" } },
     { WEIRD_ROUTE_RENDERER_CMD: process.execPath,
-      WEIRD_ROUTE_RENDERER_ARGS: JSON.stringify([FIXTURE, "proceed"]) });
+      WEIRD_ROUTE_RENDERER_ARGS: JSON.stringify([FIXTURE, "proceed"]),
+      WEIRD_ROUTE_RENDERER_ENTRY: join(HERE, "fixtures", "no-such-renderer.mjs") });
 
   assert.equal(JSON.parse(r.out).hookSpecificOutput.permissionDecision, "deny",
     "a stub renderer must not be able to force a Proceed without the dev flag");
