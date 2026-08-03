@@ -52,3 +52,18 @@ test("extractNext survives a non-string argument", () => {
     assert.equal(extractNext(junk), null, `extractNext(${JSON.stringify(junk)}) should be null`);
   }
 });
+
+test("a malformed content block does not throw", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wr-"));
+  const cases = {
+    "null-block": { content: [null], expect: "" },
+    "number-block": { content: [42], expect: "" },
+    "text-then-null": { content: [{ type: "text", text: "a" }, null], expect: "a" },
+    "text-missing": { content: [{ type: "text" }], expect: "" },
+  };
+  for (const [name, { content, expect }] of Object.entries(cases)) {
+    const path = join(dir, `${name}.jsonl`);
+    await writeFile(path, JSON.stringify({ type: "assistant", message: { content } }));
+    assert.equal(await readLastAssistantText(path), expect, `${name} broke the reader`);
+  }
+});

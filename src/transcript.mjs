@@ -39,7 +39,13 @@ export async function readLastAssistantText(transcriptPath) {
     const content = entry.message?.content;
     if (typeof content === "string") latest = content;
     else if (Array.isArray(content)) {
-      latest = content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+      // Blocks are guarded the same way entries are: a null or non-object
+      // block would make `.type` and `.text` unguarded dereferences, and
+      // nothing here is inside a try/catch.
+      latest = content
+        .filter((b) => b && typeof b === "object" && b.type === "text")
+        .map((b) => (typeof b.text === "string" ? b.text : ""))
+        .join("\n");
     }
   }
   return latest;
