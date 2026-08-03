@@ -43,13 +43,18 @@ window.weird.onSfx((file) => {
 
 // Text is drawn one row at a time, sliced to however many characters the main
 // process says have been revealed. The typewriter is main's clock, not ours.
-const drawText = (revealed) => {
+const drawText = (revealed, beat) => {
   const { job, box, rows } = ctx;
   const textX = job.face ? box.textX.withPortrait : box.textX.noPortrait;
+  // Defence in depth: the choice row belongs to the options once they are
+  // showing. job.mjs already reserves it, but text and options are drawn by
+  // two independent passes at the same coordinates, so nothing structural
+  // stopped them colliding — and they did.
+  const limit = beat === 2 && job.options.length > 0 ? rows.length - 1 : rows.length;
   let budget = revealed;
   const spans = [];
   job.lines.forEach((line, i) => {
-    if (i >= rows.length) return;
+    if (i >= limit) return;
     const shown = line.slice(0, Math.max(0, budget));
     budget -= line.length;
     // An asterisk row hangs one pixel left; a continuation row does not.
@@ -90,7 +95,7 @@ const drawChoice = (beat, cursor) => {
 
 window.weird.onRender(({ revealed, beat, cursor }) => {
   if (!ctx) return;
-  drawText(revealed);
+  drawText(revealed, beat);
   drawChoice(beat, cursor);
 });
 
@@ -135,7 +140,7 @@ window.weird.onJob((data) => {
   // stylesheet is unreliable across Chromium's file:// access rules.
   const font = new FontFace("DTM", `url("${base}/font/DeterminationMonoWeb.woff")`);
   const paint = () => {
-    drawText(state.revealed);
+    drawText(state.revealed, state.beat);
     drawChoice(state.beat, state.cursor);
     window.weird.ready();
   };

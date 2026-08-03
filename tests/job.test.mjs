@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildJob, describeTool, CONSEQUENTIAL_TOOLS } from "../src/job.mjs";
-import { MAX_CHARS } from "../src/geometry.mjs";
+import { MAX_CHARS, MAX_ROWS } from "../src/geometry.mjs";
 
 const active = { routeActive: true, autoContinues: 0 };
 
@@ -30,6 +30,38 @@ test("every generated line fits the box", () => {
     assert.ok(line.length <= MAX_CHARS.withPortrait, `"${line}" is ${line.length} chars`);
   }
   assert.ok(job.lines.length <= 3);
+});
+
+test("no box with options ever speaks on the choice row", () => {
+  // The choice row IS row 2, and text and options are drawn by separate passes
+  // at the same coordinates. The start box wrapped to three rows and the third
+  // was painted underneath Proceed/Refuse. Every assertion in the suite passed
+  // through it, because nothing compared the two passes against each other.
+  const jobs = [
+    buildJob({ hook_event_name: "UserPromptSubmit", prompt: "weird route" },
+             { routeActive: false, autoContinues: 0 }),
+    buildJob({ hook_event_name: "Notification" }, active),
+    buildJob({ hook_event_name: "Stop", next: "keep going" },
+             { routeActive: true, autoContinues: 25 }),
+    ...CONSEQUENTIAL_TOOLS.map((tool) => buildJob(
+      { hook_event_name: "PreToolUse", tool_name: tool,
+        tool_input: { file_path: "/a/".repeat(90) + "deep.ts", command: "x".repeat(400),
+                      url: "https://example.com/" + "y".repeat(400), description: "z".repeat(400) } },
+      active)),
+  ];
+
+  for (const job of jobs) {
+    assert.ok(job, "expected a box");
+    assert.ok(job.options.length > 0, "these all offer a choice");
+    assert.ok(job.lines.length <= MAX_ROWS - 1,
+      `${job.kind}/${job.face} speaks ${job.lines.length} rows: ${JSON.stringify(job.lines)}`);
+  }
+});
+
+test("the route-complete box may use every row, having no choice to collide with", () => {
+  const job = buildJob({ hook_event_name: "Stop", next: null }, active);
+  assert.equal(job.options.length, 0);
+  assert.ok(job.lines.length <= MAX_ROWS);
 });
 
 test("describeTool names the file for an edit", () => {

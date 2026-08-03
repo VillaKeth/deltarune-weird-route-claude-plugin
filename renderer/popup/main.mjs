@@ -201,7 +201,11 @@ win.webContents.on("before-input-event", (_event, input) => {
   const action = keyAction(state, input.key);
   switch (action.type) {
     case "answer":
-      play(action.choice === "refuse" ? "ominous_cancel.wav" : "ui_select.wav");
+      // Dismissing the route-complete box is an acknowledgement, not an abort.
+      // It reports "refuse" because there was nothing to approve, and playing
+      // the abort jingle for it contradicts the spec's audio table.
+      if (state.kind === "complete") play(null);
+      else play(action.choice === "refuse" ? "ominous_cancel.wav" : "ui_select.wav");
       // Let the sound start before the window vanishes.
       setTimeout(() => answer(action.choice), 120);
       return;
@@ -246,7 +250,19 @@ ipcMain.on("ready", async () => {
   // Automated runs keep the window hidden. It still renders, still receives
   // input events, still captures — it just does not flash over whatever the
   // user is doing every time the suite runs.
-  if (!process.env.WEIRD_ROUTE_KEYS && !CAPTURE) win.show();
+  if (!process.env.WEIRD_ROUTE_KEYS && !CAPTURE) {
+    win.show();
+    // show() alone does not reliably give a frameless, skipTaskbar,
+    // alwaysOnTop window keyboard focus on Windows — it appears, but keys keep
+    // going to whatever had focus before, so Z did nothing until the user
+    // clicked the box. before-input-event only fires for the focused window,
+    // so a box that cannot take focus cannot be answered.
+    //
+    // The automated tests never caught this: they keep the window hidden and
+    // deliver input with sendInputEvent, which does not need OS focus at all.
+    win.focus();
+    app.focus({ steal: true });
+  }
   if (job.sfx === "start") play("ui_spooky_action.wav");
   startCrawl();
 
