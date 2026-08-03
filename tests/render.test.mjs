@@ -15,8 +15,9 @@ const JOB = {
   options: ["Proceed", "Refuse"], default: 0, sfx: null,
 };
 
-const capture = () => new Promise((resolve, reject) => {
-  const out = join(tmpdir(), `weird-render-${process.pid}.png`);
+let seq = 0;
+const capture = (job) => new Promise((resolve, reject) => {
+  const out = join(tmpdir(), `weird-render-${process.pid}-${seq++}.png`);
   const electron = createRequire(import.meta.url)("electron");
   const child = spawn(electron, ["renderer/popup/main.mjs"], {
     env: { ...process.env, WEIRD_ROUTE_CAPTURE: out },
@@ -29,13 +30,13 @@ const capture = () => new Promise((resolve, reject) => {
     catch (e) { reject(new Error(`no capture (exit ${code}): ${err.slice(0, 400)}`)); }
     finally { rmSync(out, { force: true }); }
   });
-  child.stdin.end(JSON.stringify(JOB));
+  child.stdin.end(JSON.stringify(job));
 });
 
 const near = (p, r, g, b) => Math.abs(p.r - r) < 6 && Math.abs(p.g - g) < 6 && Math.abs(p.b - b) < 6;
 
 test("the rendered box matches the declared geometry", async () => {
-  const { png } = await capture();
+  const { png } = await capture(JOB);
 
   assert.equal(png.w, BOX.width * SCALE);
   assert.equal(png.h, BOX.height * SCALE);
@@ -61,15 +62,45 @@ test("the rendered box matches the declared geometry", async () => {
   assert.ok(white > 200, `face has ${white} white px — sprite did not load`);
   assert.ok(black > 200, `face has ${black} black px — outlines lost, sprite was tinted`);
 
-  // Row 0 must contain glyphs, and they must be inside the opaque text block
-  // (measured at x 74..222). Anything in the right portrait slot is overflow.
-  const band = (from, to) => {
-    let lit = 0;
-    for (let y = rowY(0) * SCALE; y < (rowY(0) + BOX.lineHeight) * SCALE; y++)
-      for (let x = from * SCALE; x < to * SCALE; x++)
-        if (near(png.px(x, y), 255, 255, 255)) lit++;
-    return lit;
+  // Glyphs are isolated by diffing against a capture of the same box with no
+  // text. Thresholding on "white" alone cannot do this: the border art is also
+  // white, and the sprite's fill is white, so a naive scan reports the frame at
+  // x 289-292 as overflowing text. The baseline self-calibrates against
+  // whatever the assets happen to contain.
+  const { png: baseline } = await capture({ ...JOB, lines: [] });
+  assert.equal(baseline.w, png.w, "baseline capture must be comparable");
+
+  const glyphColumns = (row) => {
+    const cols = new Set();
+    for (let y = rowY(row) * SCALE; y < (rowY(row) + BOX.lineHeight) * SCALE; y++) {
+      for (let x = 0; x < png.w; x++) {
+        const a = png.px(x, y), b = baseline.px(x, y);
+        if (a.r === b.r && a.g === b.g && a.b === b.b && a.a === b.a) continue;
+        if (near(a, 255, 255, 255)) cols.add(Math.floor(x / SCALE));
+      }
+    }
+    return [...cols].sort((m, n) => m - n);
   };
-  assert.ok(band(74, 223) > 100, "row 0 has no glyphs — the font did not load");
-  assert.equal(band(223, innerRight), 0, "text overflowed past the text block");
+
+  const row0 = glyphColumns(0);
+  assert.ok(row0.length > 40, `row 0 has ${row0.length} glyph columns — the font did not load`);
+
+  // "* Kris... it wants to" is 21 chars. The asterisk row hangs one pixel left,
+  // so it starts at textX-1 and cannot reach past textX-1 + 21*advance.
+  const startX = BOX.textX.withPortrait + BOX.asteriskOffset;
+  assert.ok(row0[0] >= startX, `row 0 starts at x=${row0[0]}, before ${startX}`);
+  assert.ok(row0[row0.length - 1] <= startX + JOB.lines[0].length * BOX.advance,
+    `row 0 ends at x=${row0[row0.length - 1]}, past its ${JOB.lines[0].length}-char extent`);
+  assert.ok(row0[row0.length - 1] < innerRight,
+    `row 0 ends at x=${row0[row0.length - 1]}, past the inner right edge ${innerRight}`);
+
+  // The continuation row carries a two-space indent and no asterisk, so it must
+  // start strictly right of row 0.
+  const row1 = glyphColumns(1);
+  assert.ok(row1.length > 30, `row 1 has ${row1.length} glyph columns`);
+  assert.ok(row1[0] > row0[0], `row 1 starts at ${row1[0]}, not indented past row 0's ${row0[0]}`);
+  assert.ok(row1[row1.length - 1] < innerRight, `row 1 ran past the inner right edge`);
+
+  // Row 2 was never given a line, so nothing may be drawn there.
+  assert.equal(glyphColumns(2).length, 0, "row 2 drew text it was not given");
 });

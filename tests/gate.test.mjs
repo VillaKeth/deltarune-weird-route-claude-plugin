@@ -181,12 +181,19 @@ test("an unresolvable renderer denies immediately instead of hanging", async (t)
   t.after(() => cleanup(id));
   await seed(id, { routeActive: true, autoContinues: 0 });
 
-  // No override at all. Whether or not Electron is installed, the entry-file
-  // check must short-circuit long before the 120 s renderer timeout.
+  // Point the entry at a file that does not exist, with no command override, so
+  // the existsSync short-circuit is what is under test. Measured before that
+  // check existed: Electron with a missing main does NOT exit, it hangs, and
+  // the call took 121_105 ms to resolve against the 120 s timeout.
+  //
+  // This deliberately does NOT rely on renderer/popup/main.mjs being absent.
+  // An earlier version did, and it silently became a 120 s hang the moment the
+  // real renderer was written.
   const started = Date.now();
   const r = await run(
     { hook_event_name: "PreToolUse", session_id: id, tool_name: "Write", tool_input: { file_path: "a.txt" } },
-    { WEIRD_ROUTE_RENDERER_CMD: "", WEIRD_ROUTE_RENDERER_ARGS: "" });
+    { WEIRD_ROUTE_RENDERER_CMD: "", WEIRD_ROUTE_RENDERER_ARGS: "",
+      WEIRD_ROUTE_RENDERER_ENTRY: join(HERE, "fixtures", "no-such-renderer.mjs") });
   const elapsed = Date.now() - started;
 
   assert.equal(JSON.parse(r.out).hookSpecificOutput.permissionDecision, "deny");

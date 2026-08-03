@@ -2,7 +2,13 @@
 <!doctype html>
 <meta charset="utf-8">
 <style>
-  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  /* height:100% is load-bearing. `transform: scale()` does not change layout
+     size, so without it body stays 84px tall while #box paints 252px, and
+     `overflow: hidden` clips the box to its top third. Measured: the bottom two
+     corner dots and both lower text rows vanished, and only rows 0..83 of a
+     252px capture had any content at all. */
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%;
+               background: transparent; overflow: hidden; }
   #box { position: relative; image-rendering: pixelated;
          transform-origin: top left; font-family: "DTM", monospace; color: #fff; }
   #fill   { position: absolute; background: #000; }

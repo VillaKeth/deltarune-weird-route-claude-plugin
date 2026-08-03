@@ -9,7 +9,11 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const RENDERER = join(HERE, "..", "renderer", "popup", "main.mjs");
+// Overridable so the missing-entry path is testable. Without a seam, the only
+// way to exercise it is to delete the real renderer, and a test that depended
+// on that file not existing yet broke the moment Task 7 created it.
+const RENDERER = process.env.WEIRD_ROUTE_RENDERER_ENTRY
+  || join(HERE, "..", "renderer", "popup", "main.mjs");
 
 // Test-only override args. A bare split(" ") cannot express a path containing a
 // space — and this project's own checkout path has three of them, so every

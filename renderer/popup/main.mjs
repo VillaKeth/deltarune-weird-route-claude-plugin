@@ -12,6 +12,20 @@ import { BOX, rowY } from "../../src/geometry.mjs";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCALE = 3;
 
+// Capturing a transparent, always-on-top window through the GPU compositor
+// fails with UnknownVizError on Windows. The capture path is test-only, so it
+// drops to software compositing rather than changing how the real overlay is
+// drawn. Must be called before the app is ready.
+if (process.env.WEIRD_ROUTE_CAPTURE) {
+  app.disableHardwareAcceleration();
+  // capturePage() returns PHYSICAL pixels, so on a 150%-scaled display the
+  // capture comes back 1338 px wide instead of 891 and every pixel assertion
+  // lands somewhere else. Pinning the scale factor makes the capture identical
+  // on any machine; without it this test passes or fails based on the
+  // developer's monitor settings.
+  app.commandLine.appendSwitch("force-device-scale-factor", "1");
+}
+
 let answered = false;
 const answer = (choice) => {
   if (answered) return;
@@ -57,7 +71,15 @@ const readStdin = async () => {
 const job = await readStdin().catch(() => null);
 if (!job) { process.stdout.write(JSON.stringify({ choice: "refuse" })); process.exit(0); }
 
-await app.whenReady();
+// NEVER `await app.whenReady()` at the top level of an ESM entry point.
+// Measured on Electron 43.2.0: the browser process withholds `ready` until the
+// entry module has finished evaluating, so a top-level await on it deadlocks —
+// evaluation waits for ready, ready waits for evaluation. The process then sits
+// forever with no window, no error and no output, which reads exactly like a
+// broken install. Reproduced with a four-line script, and confirmed the same
+// script works both as CJS and as ESM using `.then()`. Self-resolving top-level
+// awaits (readStdin above) are harmless; only awaiting `ready` deadlocks.
+app.whenReady().then(async () => {
 
 const win = new BrowserWindow({
   width: BOX.width * SCALE,
@@ -91,15 +113,43 @@ ipcMain.on("job:request", (e) =>
 
 // Test-only: capture the painted window and exit. This is the only way to
 // assert the geometry landed where geometry.mjs says it should.
+//
+// Anything that throws in here must still resolve the process. An earlier
+// version left this async handler uncaught: capturePage rejected with
+// UnknownVizError and the process sat for the full failsafe with nothing but
+// an UnhandledPromiseRejectionWarning on stderr.
 ipcMain.on("ready", async () => {
   win.show();
   const target = process.env.WEIRD_ROUTE_CAPTURE;
   if (!target) return;
-  const image = await win.capturePage();
-  await writeFile(target, image.toPNG());
+  try {
+    // The compositor needs a presented frame before it can hand one back;
+    // capturing the instant after show() rejects with UnknownVizError.
+    await new Promise((r) => setTimeout(r, 250));
+    const image = await win.webContents.capturePage();
+    await writeFile(target, image.toPNG());
+  } catch (e) {
+    process.stderr.write(`capture failed: ${e?.stack ?? e}\n`);
+  }
   answer("refuse");
 });
 
 win.on("closed", () => answer("refuse"));
 
+// A page that fails to load can never answer, so it must not wait for the
+// failsafe: surface it and refuse now.
+win.webContents.on("did-fail-load", (_e, code, desc) => {
+  process.stderr.write(`box.html failed to load: ${code} ${desc}\n`);
+  answer("refuse");
+});
+win.webContents.on("preload-error", (_e, path, err) => {
+  process.stderr.write(`preload failed: ${path} ${err}\n`);
+  answer("refuse");
+});
+
 await win.loadFile(join(HERE, "box.html"));
+
+}).catch((e) => {
+  process.stderr.write(`renderer startup failed: ${e?.stack ?? e}\n`);
+  answer("refuse");
+});
