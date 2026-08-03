@@ -1,0 +1,21 @@
+<!-- renderer/popup/box.html -->
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  #box { position: relative; image-rendering: pixelated;
+         transform-origin: top left; font-family: "DTM", monospace; color: #fff; }
+  #fill   { position: absolute; background: #000; }
+  #face, #border { position: absolute; image-rendering: pixelated; }
+  #border { left: 0; top: 0; pointer-events: none; }
+  .t     { position: absolute; white-space: pre; }
+  #soul  { position: absolute; line-height: 0; }
+</style>
+<div id="box">
+  <div id="fill"></div>
+  <img id="face" hidden>
+  <img id="border">
+  <div id="text"></div>
+  <div id="soul" hidden></div>
+</div>
+<script src="./box.mjs"></script>
