@@ -30,20 +30,40 @@ export const MAX_CHARS = Object.freeze({
 
 export const MAX_ROWS = 3;
 
+const INDENT = "  ";
+
+// Continuation rows carry a two-space indent, so their usable width is two
+// less than the first row's. Budgeting both rows identically is what let an
+// over-long row escape: the indent was added after the fit check, not before.
+// A token too long for an entire row is hard-broken rather than allowed to
+// overflow — tool descriptions carry real filenames, which routinely exceed 27.
 export function wrapLines(text, { withPortrait = true } = {}) {
   const max = withPortrait ? MAX_CHARS.withPortrait : MAX_CHARS.noPortrait;
   const out = [];
   let cur = "";
+  let first = true;
+
+  const budget = () => (first ? max : max - INDENT.length);
+  const fits = (s) => s.length <= budget();
+  const flush = () => {
+    if (cur === "") return;                 // never emit an empty row
+    out.push(first ? cur : INDENT + cur);
+    first = false;
+    cur = "";
+  };
+
   for (const word of text.split(" ")) {
-    const next = cur === "" ? word : `${cur} ${word}`;
-    if (next.length > max) {
-      out.push(cur);
-      cur = `  ${word}`;
-    } else {
-      cur = next;
+    if (word === "") continue;
+    let rest = word;
+    if (cur !== "" && !fits(`${cur} ${rest}`)) flush();
+    while (!fits(rest)) {
+      cur = rest.slice(0, budget());
+      rest = rest.slice(budget());
+      flush();
     }
+    cur = cur === "" ? rest : `${cur} ${rest}`;
   }
-  if (cur) out.push(cur);
+  flush();
   return out;
 }
 

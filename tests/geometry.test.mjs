@@ -33,6 +33,38 @@ test("wrapLines indents continuation rows by two", () => {
   for (const r of rows.slice(1)) assert.equal(r.startsWith("  "), true);
 });
 
+// The three cases below are regressions. The original algorithm compared the
+// fit before adding the continuation indent, so every one of them produced a
+// row wider than the box.
+test("a word longer than a whole row is hard-broken, never overflowed", () => {
+  const rows = wrapLines("Supercalifragilisticexpialidocious is great");
+  for (const r of rows) assert.ok(r.length <= 27, `"${r}" is ${r.length} chars`);
+});
+
+test("wrapLines never emits an empty row", () => {
+  for (const input of [
+    "Supercalifragilisticexpialidocious is great",
+    "Hi " + "x".repeat(26),
+    "* it wants to change PaymentGatewayIntegrationTest.spec.ts.",
+  ]) {
+    for (const r of wrapLines(input)) assert.notEqual(r, "", `empty row from "${input}"`);
+  }
+});
+
+test("a realistic long filename stays inside the box", () => {
+  const rows = wrapLines("* it wants to change PaymentGatewayIntegrationTest.spec.ts.");
+  for (const r of rows) assert.ok(r.length <= 27, `"${r}" is ${r.length} chars`);
+  assert.equal(rows.join("").includes("PaymentGatewayIntegration"), true,
+    "hard-break must not silently drop characters");
+});
+
+test("the continuation indent counts against the budget", () => {
+  const rows = wrapLines("Hi " + "x".repeat(26));
+  const continuation = rows.slice(1);
+  assert.ok(continuation.length > 0);
+  for (const r of continuation) assert.ok(r.length <= 27, `"${r}" is ${r.length} chars`);
+});
+
 test("assertFits rejects a run past the inner right edge", () => {
   assert.throws(() => assertFits(196, "ThisIsFarTooLongToFit", "Refuse"), /inner right edge/);
   assert.equal(assertFits(196, "Refuse", "Refuse"), 196);
