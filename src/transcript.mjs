@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 const MARKER = /^NEXT:\s*(.+?)\s*$/gm;
 
 export function extractNext(text) {
-  if (!text) return null;
+  // Guard the type, not just falsiness: a truthy non-string has no .matchAll.
+  if (typeof text !== "string" || !text) return null;
   let last = null;
   for (const m of text.matchAll(MARKER)) {
     const value = m[1].trim();
@@ -31,7 +32,10 @@ export async function readLastAssistantText(transcriptPath) {
     } catch {
       continue;
     }
-    if (entry.type !== "assistant") continue;
+    // JSON.parse("null") succeeds and yields null, so the type check has to
+    // survive a line that is syntactically valid but structurally useless.
+    // Dereferencing .type here is outside the try/catch above.
+    if (!entry || typeof entry !== "object" || entry.type !== "assistant") continue;
     const content = entry.message?.content;
     if (typeof content === "string") latest = content;
     else if (Array.isArray(content)) {
