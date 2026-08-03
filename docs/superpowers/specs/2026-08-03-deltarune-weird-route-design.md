@@ -148,7 +148,7 @@ All values are Deltarune game pixels, taken from the Deltarune border profile in
 | Text origin | y = 7; x = 69 with a portrait, x = 11 without |
 | Rows | 3, at y = 7, 25, 43 |
 | Asterisk offset | −1 |
-| Corner dots | rgb(170, 255, 230) at (6,6), (290,6), (6,77), (290,77) |
+| Corner dots | rgb(170, 255, 230) at (6,6), (290,6), (6,77), (290,77) — **baked into the border asset**, do not redraw |
 | Soul | 16 × 16, drawn in code, `#ff0000` |
 
 **Character advance is 8 px** — measured in-browser, true monospace. That gives
@@ -156,15 +156,27 @@ All values are Deltarune game pixels, taken from the Deltarune border profile in
 this and assert no run exceeds the inner right edge (x = 290); a hardcoded guess at
 the advance is what produced the first broken render.
 
-**Z-order is load-bearing.** The border asset is a 1 px white frame plus an *opaque
-black block* covering only the text area (x 75–222), with both portrait slots cut
-transparent. The pipeline is **border → sprite → text**. Drawing the border last
-paints the entire box black and hides everything.
+**Z-order is load-bearing.** The border asset is a 1 px frame plus an *opaque black
+block* covering only the text area, with both portrait slots cut transparent.
+Measured by decoding `assets/border.png` (297×84 RGBA) along row y = 40, the alpha
+runs are: x 0–3 transparent, **x 4–7 opaque** (left frame), x 8–73 transparent (left
+slot), **x 74–222 opaque** (text area), x 223–288 transparent (right slot), **x
+289–292 opaque** (right frame), x 293–296 transparent. The corner dots are already
+painted into the asset at the four listed coordinates and are exactly
+rgb(170, 255, 230) — the renderer must not draw its own.
+
+The pipeline is **fill → sprite → border → text → soul**. The border sits *above*
+the sprite (its cut-out slots let the face show through) and *below* the text (its
+opaque block would otherwise hide every glyph). Drawing the border last paints the
+text area black and hides everything, which is what produced the first broken render.
 
 **Faces.** `assets/noelle/` holds eight Weird Route-tone expressions: `trance`
 (default — the blank hypnotised stare), `mortified`, `mortified_stare`,
-`mortified_breakingdown`, `scared`, `stunned`, `shocked`, `speechless`. They are
-stored as monochrome white masks and are tinted at render time.
+`mortified_breakingdown`, `scared`, `stunned`, `shocked`, `speechless`. Every file
+is 56 × 61 RGBA and — verified by decoding all eight — contains exactly **two**
+colours: rgb(255,255,255) fill and rgb(0,0,0) outline, over transparency. They are
+two-tone line art, **not** masks. Draw them as-is. Applying a CSS tint or filter
+destroys the black outlines and is the wrong reading of this asset.
 
 ---
 

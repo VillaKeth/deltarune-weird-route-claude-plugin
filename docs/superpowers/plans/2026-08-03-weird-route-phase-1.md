@@ -1384,10 +1384,28 @@ Renders the box correctly and exits. No interaction yet — this task exists so 
 - Consumes: `BOX`, `rowY` from `src/geometry.mjs`
 - Produces: a process that reads a job on stdin, shows the box, writes `{"choice":"..."}` on stdout
 
-- [ ] **Step 1: Install Electron**
+- [ ] **Step 1: Confirm Electron is present**
 
-Run: `npm install`
-Expected: `electron` present in `node_modules`
+Run: `node -e "console.log(require('electron'))"`
+Expected: an absolute path ending `node_modules\electron\dist\electron.exe`. The
+controller already ran `npm install` and pinned `electron@^43.2.0`; do not change
+that version. (`^32` was the original pin and carries GHSA-vmqv-hx8q-j7mg, which
+has no fix below 43.)
+
+**Measured asset facts.** These were obtained by decoding the PNGs, not assumed.
+Build against them; do not re-derive them.
+
+- `assets/border.png` is 297 × 84 RGBA. Along row y = 40 its alpha runs are:
+  x 0–3 transparent, x 4–7 opaque, x 8–73 transparent (left portrait slot),
+  **x 74–222 opaque** (the text area), x 223–288 transparent (right slot),
+  x 289–292 opaque, x 293–296 transparent.
+- The four corner dots are **already painted into `border.png`** and are exactly
+  `rgb(170,255,230)`. The renderer must NOT draw its own — there is no `#corners`
+  element in the markup below for that reason.
+- All eight `assets/noelle/*.png` are 56 × 61 RGBA containing exactly two colours:
+  `rgb(255,255,255)` fill and `rgb(0,0,0)` outline, over transparency. They are
+  two-tone line art. Draw them as-is — **never** apply a CSS tint or filter, which
+  would erase the black outlines.
 
 - [ ] **Step 2: Write the Electron main process**
 
@@ -1420,8 +1438,10 @@ if (!job) { process.stdout.write(JSON.stringify({ choice: "refuse" })); process.
 
 // Hard failsafe: the window force-closes and refuses no matter what the
 // renderer is doing. Never ship a path that can leave an un-closable
-// always-on-top window on screen.
-setTimeout(() => answer("refuse"), 120_000).unref?.();
+// always-on-top window on screen. Deliberately NOT unref'd — the spec calls
+// this timer "independent", and an unref'd timer is by definition allowed not
+// to fire.
+setTimeout(() => answer("refuse"), 120_000);
 
 await app.whenReady();
 
@@ -1430,20 +1450,39 @@ const win = new BrowserWindow({
   height: BOX.height * SCALE,
   frame: false,
   transparent: true,
+  backgroundColor: "#00000000",   // Windows needs this explicitly with transparent
   alwaysOnTop: true,
   resizable: false,
   skipTaskbar: true,
   center: true,
+  show: false,                    // reveal only once painted, so no white flash
   webPreferences: { preload: join(HERE, "preload.cjs"), contextIsolation: true },
 });
 
 win.setAlwaysOnTop(true, "screen-saver");
 ipcMain.on("choice", (_e, choice) => answer(choice));
-ipcMain.on("job:request", (e) => e.reply("job", { job, scale: SCALE, assets: join(HERE, "..", "..", "assets") }));
+
+// Geometry travels over IPC rather than being imported by the page. Chromium
+// blocks ES-module imports over file://, so `import ... from "src/geometry.mjs"`
+// inside box.html fails with an opaque CORS error. Main already holds the
+// constants, so it forwards them — geometry.mjs stays the single source of truth.
+ipcMain.on("job:request", (e) =>
+  e.reply("job", {
+    job,
+    scale: SCALE,
+    assets: join(HERE, "..", "..", "assets"),
+    box: BOX,
+    rows: [rowY(0), rowY(1), rowY(2)],
+  }));
+
+ipcMain.on("ready", () => win.show());
 win.on("closed", () => answer("refuse"));
 
 await win.loadFile(join(HERE, "box.html"));
 ```
+
+Add `rowY` to the geometry import at the top of the file:
+`import { BOX, rowY } from "../../src/geometry.mjs";`
 
 ```javascript
 // renderer/popup/preload.cjs
@@ -1452,35 +1491,266 @@ contextBridge.exposeInMainWorld("weird", {
   onJob: (fn) => ipcRenderer.on("job", (_e, data) => fn(data)),
   requestJob: () => ipcRenderer.send("job:request"),
   answer: (choice) => ipcRenderer.send("choice", choice),
+  ready: () => ipcRenderer.send("ready"),
 });
 ```
 
 - [ ] **Step 3: Write the box markup**
 
-`renderer/popup/box.html` renders the frame using the constants imported from `src/geometry.mjs` via `box.mjs`. Structure, in this exact z-order — border under text is load-bearing, see the spec:
+DOM order IS paint order here, and it is load-bearing: the border's cut-out slots
+let the face show through, and its opaque block would hide the text if it came
+last. Order is **fill → face → border → text → soul**.
 
 ```html
+<!-- renderer/popup/box.html -->
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  #box { position: relative; image-rendering: pixelated;
+         transform-origin: top left; font-family: "DTM", monospace; color: #fff; }
+  #fill   { position: absolute; background: #000; }
+  #face, #border { position: absolute; image-rendering: pixelated; }
+  #border { left: 0; top: 0; pointer-events: none; }
+  .t     { position: absolute; white-space: pre; }
+  #soul  { position: absolute; line-height: 0; }
+</style>
 <div id="box">
   <div id="fill"></div>
-  <img id="face">
+  <img id="face" hidden>
   <img id="border">
-  <div id="corners"></div>
   <div id="text"></div>
-  <div id="soul"></div>
+  <div id="soul" hidden></div>
 </div>
+<script src="./box.mjs"></script>
 ```
 
-Styles mirror the verified mockup: `#box` is `BOX.width` × `BOX.height` with `transform: scale(3)`, `transform-origin: top left`; `#fill` is `inset: BOX.border` on `#000`; `#face` and `#border` are `image-rendering: pixelated`; text spans are absolutely positioned at `rowY(n)`.
+`box.mjs` is a **classic script, not a module** — Chromium refuses ES-module
+imports over `file://`, so a `type="module"` tag fails with an opaque CORS error.
+Every constant arrives over IPC.
 
-- [ ] **Step 4: Verify the render visually**
+```javascript
+// renderer/popup/box.mjs
+const $ = (id) => document.getElementById(id);
 
-Run: `echo '{"kind":"gate","face":"trance","lines":["* Kris... it wants to","  rewrite 14 files."],"options":["Proceed","Refuse"],"default":0,"sfx":null}' | npx electron renderer/popup/main.mjs`
-Expected: the box appears centred, always on top, transparent-backed, text legible and inside the frame, Noelle visible in the left slot. Close it; stdout prints `{"choice":"refuse"}`.
+// The 16x16 Deltarune soul, as measured rects. Drawn rather than shipped as a
+// PNG so it needs no asset and scales exactly with the box.
+const SOUL_RECTS = [
+  [4, 1, 2, 1], [10, 1, 2, 1], [3, 2, 4, 1], [9, 2, 4, 1],
+  [2, 3, 12, 5], [3, 8, 10, 2], [4, 10, 8, 1], [5, 11, 6, 1],
+  [6, 12, 4, 1], [7, 13, 2, 1],
+];
 
-- [ ] **Step 5: Commit**
+const soulSvg = (size) =>
+  `<svg viewBox="0 0 16 16" shape-rendering="crispEdges" width="${size}" height="${size}">` +
+  `<g fill="#ff0000">` +
+  SOUL_RECTS.map(([x, y, w, h]) => `<rect x="${x}" y="${y}" width="${w}" height="${h}"/>`).join("") +
+  `</g></svg>`;
+
+window.weird.onJob(({ job, scale, assets, box, rows }) => {
+  const url = (p) => "file:///" + `${assets}/${p}`.replace(/\\/g, "/");
+
+  // Font is injected with an absolute file:// URL. A relative @font-face url in
+  // the stylesheet resolves against the page but is unreliable across Chromium's
+  // file:// access rules; this form is not.
+  const font = new FontFace("DTM", `url("${url("font/DeterminationMonoWeb.woff")}")`);
+  const paint = () => {
+    const b = $("box");
+    b.style.width = `${box.width}px`;
+    b.style.height = `${box.height}px`;
+    b.style.transform = `scale(${scale})`;
+    b.style.fontSize = `${box.fontSize}px`;
+    b.style.lineHeight = `${box.lineHeight}px`;
+
+    Object.assign($("fill").style, {
+      left: `${box.border}px`, top: `${box.border}px`,
+      width: `${box.width - box.border * 2}px`,
+      height: `${box.height - box.border * 2}px`,
+    });
+
+    const border = $("border");
+    border.src = url("border.png");
+    border.width = box.width;
+    border.height = box.height;
+
+    if (job.face) {
+      const face = $("face");
+      face.src = url(`noelle/${job.face}.png`);
+      // 56x61 sprite centred in the 67x70 slot -> +5,+4. Derived, not hardcoded.
+      face.style.left = `${box.slot.x + Math.floor((box.slot.w - 56) / 2)}px`;
+      face.style.top = `${box.slot.y + Math.floor((box.slot.h - 61) / 2)}px`;
+      face.width = 56; face.height = 61;
+      face.hidden = false;
+    }
+
+    const textX = job.face ? box.textX.withPortrait : box.textX.noPortrait;
+    $("text").innerHTML = job.lines.map((line, i) => {
+      // An asterisk row hangs one pixel left; a continuation row does not.
+      const x = line.startsWith("*") ? textX + box.asteriskOffset : textX;
+      return `<span class="t" style="left:${x}px;top:${rows[i]}px">${
+        line.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</span>`;
+    }).join("");
+
+    window.weird.ready();
+  };
+
+  font.load().then((f) => { document.fonts.add(f); paint(); }, paint);
+});
+
+window.weird.requestJob();
+```
+
+Two details that are easy to get wrong and are asserted in Step 4: the soul is
+**not** rendered in this task (there is no interaction yet — `#soul` stays hidden;
+`soulSvg` exists for Task 8), and the face offset is *computed* from `box.slot`
+rather than written as the literal `12, 11`.
+
+- [ ] **Step 4: Add the capture hook to `main.mjs`**
+
+The render must be *proved*, not eyeballed. Add to `main.mjs`, right after the
+existing `ipcMain.on("ready", ...)` — replace that line with:
+
+```javascript
+// Test-only: capture the painted window and exit. This is the only way to
+// assert the geometry landed where geometry.mjs says it should.
+ipcMain.on("ready", async () => {
+  win.show();
+  const target = process.env.WEIRD_ROUTE_CAPTURE;
+  if (!target) return;
+  const image = await win.capturePage();
+  await writeFile(target, image.toPNG());
+  answer("refuse");
+});
+```
+
+with `import { writeFile } from "node:fs/promises";` at the top.
+
+- [ ] **Step 5: Write the PNG reader and the render assertions**
+
+`tools/png.mjs` — a minimal 8-bit non-interlaced PNG decoder built on `node:zlib`,
+so the assertions need no dependency. It exports
+`decodePng(path) -> { w, h, ch, px(x, y) -> {r,g,b,a} }`. Implement IHDR/IDAT
+parsing, `inflateSync`, and the five per-scanline filters from PNG spec §9.2
+(None/Sub/Up/Average/Paeth).
+
+`tests/render.test.mjs` — spawns Electron against a fixed job, captures, asserts.
+This is a `node:test` file like every other suite:
+
+```javascript
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+import { readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { decodePng } from "../tools/png.mjs";
+import { BOX, innerRight, rowY } from "../src/geometry.mjs";
+
+const SCALE = 3;
+const JOB = {
+  kind: "gate", face: "trance",
+  lines: ["* Kris... it wants to", "  rewrite 14 files."],
+  options: ["Proceed", "Refuse"], default: 0, sfx: null,
+};
+
+const capture = () => new Promise((resolve, reject) => {
+  const out = join(tmpdir(), `weird-render-${process.pid}.png`);
+  const electron = createRequire(import.meta.url)("electron");
+  const child = spawn(electron, ["renderer/popup/main.mjs"], {
+    env: { ...process.env, WEIRD_ROUTE_CAPTURE: out },
+    stdio: ["pipe", "ignore", "pipe"],
+  });
+  let err = "";
+  child.stderr.on("data", (c) => (err += c));
+  child.on("close", (code) => {
+    try { resolve({ png: decodePng(out), code }); }
+    catch (e) { reject(new Error(`no capture (exit ${code}): ${err.slice(0, 400)}`)); }
+    finally { rmSync(out, { force: true }); }
+  });
+  child.stdin.end(JSON.stringify(JOB));
+});
+
+const near = (p, r, g, b) => Math.abs(p.r - r) < 6 && Math.abs(p.g - g) < 6 && Math.abs(p.b - b) < 6;
+
+test("the rendered box matches the declared geometry", async () => {
+  const { png } = await capture();
+
+  assert.equal(png.w, BOX.width * SCALE);
+  assert.equal(png.h, BOX.height * SCALE);
+
+  // The corner dots come from border.png. Correct colour at the correct scaled
+  // position proves the border loaded, sits at 0,0 and scaled by exactly SCALE.
+  for (const [x, y] of BOX.corners) {
+    const p = png.px(x * SCALE + 1, y * SCALE + 1);
+    assert.ok(near(p, 170, 255, 230), `corner (${x},${y}) was rgb(${p.r},${p.g},${p.b})`);
+  }
+
+  // The face is two-tone line art. Both colours must survive — a CSS tint would
+  // erase the black and this assertion is what catches that.
+  let black = 0, white = 0;
+  for (let y = BOX.slot.y * SCALE; y < (BOX.slot.y + BOX.slot.h) * SCALE; y++) {
+    for (let x = BOX.slot.x * SCALE; x < (BOX.slot.x + BOX.slot.w) * SCALE; x++) {
+      const p = png.px(x, y);
+      if (p.a < 128) continue;
+      if (near(p, 255, 255, 255)) white++;
+      else if (near(p, 0, 0, 0)) black++;
+    }
+  }
+  assert.ok(white > 200, `face has ${white} white px — sprite did not load`);
+  assert.ok(black > 200, `face has ${black} black px — outlines lost, sprite was tinted`);
+
+  // Row 0 must contain glyphs, and they must be inside the opaque text block
+  // (measured at x 74..222). Anything in the right portrait slot is overflow.
+  const band = (from, to) => {
+    let lit = 0;
+    for (let y = rowY(0) * SCALE; y < (rowY(0) + BOX.lineHeight) * SCALE; y++)
+      for (let x = from * SCALE; x < to * SCALE; x++)
+        if (near(png.px(x, y), 255, 255, 255)) lit++;
+    return lit;
+  };
+  assert.ok(band(74, 223) > 100, "row 0 has no glyphs — the font did not load");
+  assert.equal(band(223, innerRight), 0, "text overflowed past the text block");
+});
+```
+
+- [ ] **Step 6: Run the render test**
+
+Run: `npm test`
+Expected: all suites pass, including `the rendered box matches the declared geometry`.
+A failure here names the exact assertion, which is the point — do not weaken an
+assertion to make it pass. If the font does not load, fix the URL; if the corners
+are wrong, fix the scale.
+
+- [ ] **Step 7: Look at it once**
+
+Run: `node tools/show-box.mjs`
+
+```javascript
+// tools/show-box.mjs — feeds a job over stdin without shell quoting. `echo |`
+// does not work here: PowerShell's echo appends CRLF and may emit a BOM, and
+// the project path contains spaces.
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+const child = spawn(createRequire(import.meta.url)("electron"), ["renderer/popup/main.mjs"], { stdio: ["pipe", "inherit", "inherit"] });
+child.stdin.end(JSON.stringify({
+  kind: "gate", face: "trance",
+  lines: ["* Kris... it wants to", "  rewrite 14 files."],
+  options: ["Proceed", "Refuse"], default: 0, sfx: null,
+}));
+```
+
+Expected: a centred, always-on-top, transparent-backed box; Noelle in the left
+slot; text legible and inside the frame. Close it — stdout prints
+`{"choice":"refuse"}`.
+
+- [ ] **Step 8: Commit**
+
+Stage only the paths this task created. Never `git add -A` — an earlier task swept
+an unrelated untracked tree into its commit.
 
 ```bash
-git add renderer/popup/
+git add renderer/popup/ tools/png.mjs tools/show-box.mjs tests/render.test.mjs
 git commit -m "feat: electron window rendering the deltarune box"
 ```
 
