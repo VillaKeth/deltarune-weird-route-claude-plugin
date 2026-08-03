@@ -24,7 +24,34 @@ assets/noelle/{trance,mortified,mortified_stare,mortified_breakingdown,
 assets/sfx/{ui_spooky_action,ominous_cancel,ui_move,ui_select,voice_noelle}.wav
 ```
 
-The hooks are already registered in `.claude/settings.json`.
+### Registering the hooks
+
+Two ways, and you want **exactly one of them**. Both register the same four hooks,
+so running both means two boxes for every single gate.
+
+**This repository only** — nothing to install, works already:
+`.claude/settings.json` registers the hooks against `$CLAUDE_PROJECT_DIR`, so they
+fire when the project directory *is* this checkout.
+
+**Every project** — install it as a plugin:
+
+```powershell
+claude plugin marketplace add .
+claude plugin install deltarune-weird-route@deltarune-weird-route
+```
+
+Then delete the `hooks` block from `.claude/settings.json`, or this checkout gets
+gated twice.
+
+For a single session without installing anything:
+
+```powershell
+claude --plugin-dir "C:\path\to\Deltarune Weird Route Claude Code Wrapper"
+```
+
+The plugin keeps its per-session state in `CLAUDE_PLUGIN_DATA` when Claude Code
+provides it, and in `state/` beside the source when run from a checkout. The install
+directory is replaced on update, so a live route would otherwise reset itself.
 
 ## Use
 
@@ -65,7 +92,7 @@ boxes cascade from there so none can hide underneath another.
 ## Develop
 
 ```powershell
-npm test                    # 110 tests, node --test
+npm test                    # 129 tests, node --test
 node tools/show-box.mjs     # see the box without a gate
 ```
 
@@ -98,6 +125,8 @@ silently.
 ## How it works
 
 ```
+.claude-plugin/         plugin manifest, and the marketplace that publishes it
+hooks/hooks.json        which events reach the gate, for a plugin install
 hooks/gate.mjs          UserPromptSubmit, PreToolUse, Stop, Notification enter here
 src/geometry.mjs        every pixel value, declared once
 src/nav.mjs             interaction rules, as pure functions

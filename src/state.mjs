@@ -9,8 +9,15 @@ export const AUTO_CONTINUE_LIMIT = 25;
 // with a live session. Cannot force a Proceed: a bad directory yields fresh
 // state, which means the route reads as off and no box is shown — the same as
 // the default state, never an approval.
+// CLAUDE_PLUGIN_DATA is where Claude Code puts a plugin's persistent state. The
+// plugin's own install directory is not: it is replaced on update, which would
+// silently reset a live route. Falling back to state/ beside the source keeps
+// the repo checkout — the way this is run during development — working as it
+// always has.
 const DEFAULT_DIR = process.env.WEIRD_ROUTE_STATE_DIR
-  || join(dirname(fileURLToPath(import.meta.url)), "..", "state");
+  || (process.env.CLAUDE_PLUGIN_DATA
+      ? join(process.env.CLAUDE_PLUGIN_DATA, "state")
+      : join(dirname(fileURLToPath(import.meta.url)), "..", "state"));
 const fresh = () => ({ routeActive: false, autoContinues: 0 });
 const pathFor = (sessionId, dir) => join(dir, `${sessionId}.json`);
 

@@ -1,0 +1,12 @@
+{
+  "name": "deltarune-weird-route",
+  "owner": { "name": "VillaKWS" },
+  "description": "The Deltarune Weird Route gate, published from its own repository.",
+  "plugins": [
+    {
+      "name": "deltarune-weird-route",
+      "source": "./",
+      "description": "Gates Claude's autonomy behind Deltarune's Weird Route dialogue box."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "deltarune-weird-route",
+  "displayName": "Deltarune Weird Route",
+  "description": "Gates Claude's autonomy behind Deltarune's Weird Route dialogue box. Noelle says what Claude is about to do; you answer Proceed or Refuse.",
+  "version": "0.1.0",
+  "author": { "name": "VillaKWS" },
+  "keywords": ["hooks", "permissions", "deltarune"],
+  "license": "MIT"
+}
