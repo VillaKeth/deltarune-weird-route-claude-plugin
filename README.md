@@ -33,15 +33,30 @@ so running both means two boxes for every single gate.
 `.claude/settings.json` registers the hooks against `$CLAUDE_PROJECT_DIR`, so they
 fire when the project directory *is* this checkout.
 
-**Every project** — install it as a plugin:
+**Every project** — install it as a plugin. Install from **git**, not from this
+directory:
 
 ```powershell
-claude plugin marketplace add .
+claude plugin marketplace add your-name/deltarune-weird-route
 claude plugin install deltarune-weird-route@deltarune-weird-route
 ```
 
 Then delete the `hooks` block from `.claude/settings.json`, or this checkout gets
 gated twice.
+
+> **Do not install from a local path.** `claude plugin marketplace add <dir>` copies
+> the entire working tree into the plugin cache and **ignores `.gitignore`**. Measured
+> here: 625 files and 15.4 MB, including `assets/` — copyrighted material this repo
+> deliberately keeps out of git — and `.claude/settings.local.json`, which carries
+> `"defaultMode": "bypassPermissions"`. A plugin whose job is gating autonomy must
+> not ship a permission bypass. A git install carries committed files only.
+>
+> (`claude plugin marketplace add .` is also rejected outright — a bare `.` is not a
+> recognised source format. It wants `owner/repo`, a URL, or `./path`.)
+
+Installation also keeps working after it says it is done: it runs `npm install`,
+which fetches the ~350 MB Electron binary. Gates that fire before that finishes
+cannot resolve Electron and refuse — safe, but everything refuses until it lands.
 
 For a single session without installing anything:
 
@@ -122,12 +137,20 @@ $env:WEIRD_ROUTE_POS = "bottom-right"
 ```
 
 `center` (default), `top-left`, `top-right`, `bottom-left`, `bottom-right`. Concurrent
-boxes cascade from there so none can hide underneath another.
+boxes cascade from there so none can hide underneath another. Corner placements
+cascade *inward*: a box sitting 24 px from an edge has only 24 px of room, and
+stepping outward would walk it off the display.
+
+With more than one monitor the box opens on the display holding the **mouse cursor**,
+which is the only proxy available — Electron cannot ask which display holds the
+terminal that spawned it. If your cursor habitually rests on a different screen from
+the terminal you type in, use the inline renderer, which draws in the terminal itself
+and cannot land on the wrong monitor by construction.
 
 ## Develop
 
 ```powershell
-npm test                    # 161 tests, node --test
+npm test                    # 173 tests, node --test
 node tools/show-box.mjs     # see the box without a gate
 ```
 
@@ -167,6 +190,7 @@ hooks/hooks.json        which events reach the gate, for a plugin install
 hooks/gate.mjs          UserPromptSubmit, PreToolUse, Stop, Notification enter here
 src/geometry.mjs        every pixel value, declared once
 src/cells.mjs           every cell value, derived from the pixel values
+src/window-place.mjs    where the popup lands, clamped to one display
 src/nav.mjs             interaction rules, as pure functions
 src/scene.mjs           the inline scene, as a reducer
 src/keys.mjs            console bytes -> key names

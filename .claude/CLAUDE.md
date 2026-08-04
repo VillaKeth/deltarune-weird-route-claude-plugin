@@ -48,8 +48,26 @@ access and fails `EPERM` on a read-only handle; and raw mode must be set **befor
 attaching a `data` listener, because a listener on a cooked console blocks the
 event loop on a line read that never returns — which also stops the failsafe timer.
 
+**Arrow keys arrive as CSI sequences, measured not assumed.** Injecting real
+`KEY_EVENT_RECORD`s with `WriteConsoleInput` and logging what a raw `CONIN$` stream
+delivers: `VK_RIGHT` → `1b 5b 43`, `LEFT` → `1b 5b 44`, `UP` → `1b 5b 41`, Escape →
+a bare `1b`, Enter → `0d`. Raw mode reports console mode `0x208`, so
+`ENABLE_VIRTUAL_TERMINAL_INPUT` is on and `ENABLE_LINE_INPUT` is off. The scan code
+and `ENHANCED_KEY` do not matter; the virtual key code alone is enough. The whole
+interaction has been driven end to end this way — arrows, clamping at both ends of
+the option list, Escape, and console mode restored to its exact prior value.
+
 **Claude Code repaints over anything drawn to its console.** The box does not fight
 for the screen; it redraws on a 100 ms heartbeat, faster than it can be clobbered.
+
+**The window is clamped to the work area on all four sides,** in
+`src/window-place.mjs`. Two separate bugs put the box on the wrong monitor: first
+`workAreaSize`, which is a *size* with no origin, so every coordinate was implicitly
+relative to the primary display; then a cascade offset clamped only to the left and
+top, which let a corner placement slide off to the right — and off the right edge
+means onto the neighbouring monitor. Corner anchors cascade **inward**, because a
+box anchored `MARGIN` from an edge has only `MARGIN` of room before it. A display
+left of the primary one has a **negative** origin, so nothing may clamp against zero.
 
 **`src/cells.mjs` owns cell values the way `geometry.mjs` owns pixel values.** The
 two spaces do not share a scale — text is 8 px per column but the sprite is 1 px per
@@ -79,6 +97,22 @@ always-on-top window on someone's screen.
 
 **Assets are never committed.** Copyrighted Toby Fox material. `.gitignore` keeps them
 out deliberately — do not add them, and do not `git add -f` them.
+
+**`claude plugin install` from a local directory copies the whole working tree, and
+ignores `.gitignore`.** Measured against a throwaway `CLAUDE_CONFIG_DIR`: 625 files
+and 15.4 MB landed in the plugin cache, including `assets/` (21 copyrighted files),
+`.claude/_archive-wellnessscape/` (22 files belonging to another project), and
+`.claude/settings.local.json` — which carries `"defaultMode": "bypassPermissions"`.
+A plugin that exists to gate autonomy must not ship a permission bypass. Installing
+from **git** is the only safe distribution path, because a clone carries committed
+files only. Never point a marketplace at this working directory for anything but a
+local experiment.
+
+**Installation keeps downloading after it reports success.** The same measurement
+went from 15.4 MB to 362.8 MB *after* `claude plugin install` printed
+"Successfully installed": it runs `npm install`, which fetches the Electron binary.
+A gate that fires during that window cannot resolve Electron and refuses. Safe, but
+every tool call refuses until the download lands.
 
 **Stage named paths.** Never `git add -A` or `git add .`. A task once swept an unrelated
 untracked tree into its commit, including another project's files and a
@@ -124,4 +158,24 @@ workflow that fired ~100 model calls. Do not repeat it.
 Bitdefender was blocking Electron; it was actually running `electron.exe` from
 PowerShell, which does not wait for GUI-subsystem binaries and shows none of their
 output. Reproduce a diagnosis before acting on it — and suspect your own probe harness
-first. Five separate false alarms here came from broken harnesses, not broken code.
+first. Eight separate false alarms here came from broken harnesses, not broken code.
+
+Three of those eight came from one afternoon of verifying the inline renderer, and
+all three are PowerShell traps worth naming:
+
+- `Add-Type -MemberDefinition` already emits `using System.Runtime.InteropServices`.
+  Passing `-UsingNamespace System.Runtime.InteropServices` duplicates it, which is
+  CS0105, which `Add-Type` treats as an **error**. It failed silently for two runs
+  while every `[Con.Api]::` call threw into an uncaptured stderr.
+- `0xC0000000` as a bare literal overflows `Int32` and comes out negative, so the
+  `uint` parameter conversion throws and the assignment never happens. Cast it:
+  `[uint32]3221225472`.
+- A struct passed to a `CharSet=Unicode` API needs `CharSet=CharSet.Unicode` on its
+  own `[StructLayout]`. The default is Ansi, and a `char` field then marshals as one
+  byte, silently wrecking every offset after it.
+
+And one that was not a harness bug but looked exactly like one: a key script that
+waits longer than the typewriter crawl (40 chars × 35 ms = 1400 ms) finds nothing
+left to skip, so the first `z` opens the choice and the second **answers** it. Four
+"the renderer ignores arrow keys" failures were really the scene answering before
+the arrow was ever sent.

@@ -15,6 +15,7 @@ import { writeFile, access } from "node:fs/promises";
 import { readSync } from "node:fs";
 import { BOX, rowY, OPTION_X, faceOffset } from "../../src/geometry.mjs";
 import { keyAction, totalChars, CRAWL_MS } from "../../src/nav.mjs";
+import { placeWindow } from "../../src/window-place.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ASSETS = join(HERE, "..", "..", "assets");
@@ -145,27 +146,27 @@ const H = BOX.height * SCALE;
 // ever land there. A display left of the primary one has a NEGATIVE x, which is
 // also why the clamp below is to the display's own origin rather than to zero.
 const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
-const step = (process.pid % 6) * 28;
 
 // Dead centre is the game-accurate placement, but it lands on top of whatever
 // you are working on. WEIRD_ROUTE_POS moves it out of the way.
-const MARGIN = 24;
-const right = area.x + area.width - W - MARGIN;
-const bottom = area.y + area.height - H - MARGIN;
-const PLACES = {
-  center: [area.x + Math.round((area.width - W) / 2), area.y + Math.round((area.height - H) / 2)],
-  "top-left": [area.x + MARGIN, area.y + MARGIN],
-  "top-right": [right, area.y + MARGIN],
-  "bottom-left": [area.x + MARGIN, bottom],
-  "bottom-right": [right, bottom],
-};
-const [baseX, baseY] = PLACES[process.env.WEIRD_ROUTE_POS] ?? PLACES.center;
+//
+// The arithmetic is in src/window-place.mjs, not here. It used to be inline,
+// where node --test cannot import it, and it was wrong: the cascade was clamped
+// against the left and top edges only, so a corner placement at a high cascade
+// slot slid off to the RIGHT — onto the neighbouring monitor, the same visible
+// symptom as the workAreaSize bug it followed.
+const { x, y } = placeWindow({
+  area,
+  size: { w: W, h: H },
+  pos: process.env.WEIRD_ROUTE_POS,
+  seed: process.pid,
+});
 
 const win = new BrowserWindow({
   width: W,
   height: H,
-  x: Math.max(area.x, baseX + step),
-  y: Math.max(area.y, baseY + step),
+  x,
+  y,
   frame: false,
   transparent: true,
   backgroundColor: "#00000000",   // Windows needs this explicitly with transparent
