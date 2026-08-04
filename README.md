@@ -24,6 +24,12 @@ assets/noelle/{trance,mortified,mortified_stare,mortified_breakingdown,
 assets/sfx/{ui_spooky_action,ominous_cancel,ui_move,ui_select,voice_noelle}.wav
 ```
 
+Without them the gate still runs and still fails closed: a missing `border.png` or
+portrait makes the renderer refuse rather than draw half a box, so **every gated tool
+call is denied** until the files are in place. That is the intended behaviour, not a
+crash — but it looks like one if you skip this step. Missing sound effects are the
+exception and are ignored, because a silent box is cosmetic.
+
 ### Registering the hooks
 
 Two ways, and you want **exactly one of them**. Both register the same four hooks,
@@ -37,7 +43,7 @@ fire when the project directory *is* this checkout.
 directory:
 
 ```powershell
-claude plugin marketplace add your-name/deltarune-weird-route
+claude plugin marketplace add VillaKeth/deltarune-weird-route-claude-plugin
 claude plugin install deltarune-weird-route@deltarune-weird-route
 ```
 
