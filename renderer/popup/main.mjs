@@ -135,26 +135,37 @@ try {
 // also draggable, so one can always be pulled aside.
 const W = BOX.width * SCALE;
 const H = BOX.height * SCALE;
-const area = screen.getPrimaryDisplay().workAreaSize;
+// The box belongs on the screen you are actually working on, which is not the
+// primary display whenever there is more than one. Electron cannot ask which
+// display holds the terminal that spawned this process, so the cursor is the
+// proxy — it is on the screen you are using.
+//
+// workArea, not workAreaSize: a size has no origin, so every coordinate was
+// implicitly relative to the primary display's top-left and the box could only
+// ever land there. A display left of the primary one has a NEGATIVE x, which is
+// also why the clamp below is to the display's own origin rather than to zero.
+const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
 const step = (process.pid % 6) * 28;
 
 // Dead centre is the game-accurate placement, but it lands on top of whatever
 // you are working on. WEIRD_ROUTE_POS moves it out of the way.
 const MARGIN = 24;
+const right = area.x + area.width - W - MARGIN;
+const bottom = area.y + area.height - H - MARGIN;
 const PLACES = {
-  center: [Math.round((area.width - W) / 2), Math.round((area.height - H) / 2)],
-  "top-left": [MARGIN, MARGIN],
-  "top-right": [area.width - W - MARGIN, MARGIN],
-  "bottom-left": [MARGIN, area.height - H - MARGIN],
-  "bottom-right": [area.width - W - MARGIN, area.height - H - MARGIN],
+  center: [area.x + Math.round((area.width - W) / 2), area.y + Math.round((area.height - H) / 2)],
+  "top-left": [area.x + MARGIN, area.y + MARGIN],
+  "top-right": [right, area.y + MARGIN],
+  "bottom-left": [area.x + MARGIN, bottom],
+  "bottom-right": [right, bottom],
 };
 const [baseX, baseY] = PLACES[process.env.WEIRD_ROUTE_POS] ?? PLACES.center;
 
 const win = new BrowserWindow({
   width: W,
   height: H,
-  x: Math.max(0, baseX + step),
-  y: Math.max(0, baseY + step),
+  x: Math.max(area.x, baseX + step),
+  y: Math.max(area.y, baseY + step),
   frame: false,
   transparent: true,
   backgroundColor: "#00000000",   // Windows needs this explicitly with transparent

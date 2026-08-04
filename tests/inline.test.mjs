@@ -141,6 +141,25 @@ test("beat 2 is its own screen: her line is gone, only the choice remains", () =
     "her line is still on screen at beat 2 — the two beats are sharing the box");
 });
 
+test("she is not on the choice screen either, and the box keeps its size", () => {
+  const { box } = place(JOB, BIG);
+  // A stand-in sprite, so its presence or absence is unmistakable in the text.
+  const faceRows = Array.from({ length: box.faceRows }, () => "N".repeat(box.faceCols));
+
+  const speaking = buildFrame(JOB, { ...initialState(JOB), revealed: 999 }, box, faceRows);
+  const choosing = buildFrame(JOB, { ...initialState(JOB), revealed: 999, beat: 2 }, box, faceRows);
+
+  assert.ok(speaking.join("").includes("N"), "she should be drawn while she speaks");
+  assert.ok(!choosing.join("").includes("N"), "the portrait is still drawn on the choice screen");
+
+  // The slot stays reserved: a box that changed width between beats would jump.
+  assert.equal(choosing.length, speaking.length);
+  for (let i = 0; i < choosing.length; i++) {
+    assert.equal(stripAnsi(choosing[i]).length, stripAnsi(speaking[i]).length,
+      `row ${i} changed width when she left`);
+  }
+});
+
 test("beat 1 shows her line and no choice", () => {
   const state = { ...initialState(JOB), revealed: 999 };
   const text = render(JOB, state).join("\n");
@@ -176,6 +195,23 @@ test("the soul sits to the left of the option it points at, and moves with it", 
   // It points at its label from SOUL_GAP_COLS to the left.
   assert.equal(left.row.indexOf("Proceed") - left.i, SOUL_GAP_COLS);
   assert.equal(right.row.indexOf("Refuse") - right.i, SOUL_GAP_COLS);
+});
+
+test("the choice is centred in the box, not left in the vacated text column", () => {
+  // The text area is offset right to clear the portrait, and the portrait is
+  // not on this screen. Leaving the choice there stranded it against the right
+  // edge of an otherwise empty box.
+  const { box } = place(JOB, BIG);
+  const rendered = render(JOB, { ...initialState(JOB), revealed: 999, beat: 2, cursor: 0 });
+  const row = rendered.find((r) => r.includes("Proceed"));
+  assert.ok(row, "the choice must be drawn");
+
+  const first = row.indexOf("♥");
+  const last = row.indexOf("Refuse") + "Refuse".length;
+  const slack = Math.abs((first - 1) - (box.width - 1 - last));
+  assert.ok(slack <= 2, `the choice is off-centre: ${first - 1} left, ${box.width - 1 - last} right`);
+  assert.ok(first < box.textCol,
+    `the choice starts at ${first}, still inside the text column at ${box.textCol}`);
 });
 
 test("a job whose lines overflow the box is clipped, not spilled", () => {

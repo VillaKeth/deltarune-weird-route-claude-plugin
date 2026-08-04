@@ -43,6 +43,16 @@ window.weird.onSfx((file) => {
 
 // Text is drawn one row at a time, sliced to however many characters the main
 // process says have been revealed. The typewriter is main's clock, not ours.
+// Beat 2 is the choice and nothing else — her line is gone, and so is she. The
+// portrait belongs to the beat where she is speaking; on the choice screen it
+// is just the last frame of her sitting there while you decide.
+const drawFace = (beat) => {
+  const { job } = ctx;
+  const face = $("face");
+  if (!job.face) return;
+  face.hidden = beat === 2 && job.options.length > 0;
+};
+
 const drawText = (revealed, beat) => {
   const { job, box, rows } = ctx;
   const textX = job.face ? box.textX.withPortrait : box.textX.noPortrait;
@@ -98,6 +108,7 @@ const drawChoice = (beat, cursor) => {
 
 window.weird.onRender(({ revealed, beat, cursor }) => {
   if (!ctx) return;
+  drawFace(beat);
   drawText(revealed, beat);
   drawChoice(beat, cursor);
 });
@@ -143,6 +154,7 @@ window.weird.onJob((data) => {
   // stylesheet is unreliable across Chromium's file:// access rules.
   const font = new FontFace("DTM", `url("${base}/font/DeterminationMonoWeb.woff")`);
   const paint = () => {
+    drawFace(state.beat);
     drawText(state.revealed, state.beat);
     drawChoice(state.beat, state.cursor);
     window.weird.ready();

@@ -61,24 +61,36 @@ const CHOICE_ROW = TEXT_ROWS - 1;
 
 // What the text area holds on one row. Beat 2 is its own screen: her line is
 // gone and only the choice remains, exactly as the popup does it.
+// The gap between the labels, taken from the declared pixel positions rather
+// than picked: the distance between where Proceed starts and where Refuse does,
+// in characters.
+const OPTION_GAP = OPTION_COL.Refuse - OPTION_COL.Proceed;
+
+// The choice, centred across the whole inside of the box.
+//
+// It used to sit in the text area, which is offset to the right to clear the
+// portrait — and the portrait is not on this screen. That left the labels
+// stranded against the right edge of an otherwise empty box. Centring them
+// puts them where the popup's own choice row appears, which is the look this
+// is copying.
+function choiceCells(options, cursor, width) {
+  const cells = blanks(width);
+  const last = options[options.length - 1] ?? "";
+  // The soul hangs to the LEFT of the first label, so it is part of what is
+  // being centred. Centring the labels alone leaves the row visibly offset by
+  // exactly the soul's own width.
+  const groupWidth = SOUL_GAP_COLS + OPTION_GAP * (options.length - 1) + last.length;
+  // Never so far left that the soul would be pushed through the frame.
+  const start = SOUL_GAP_COLS + Math.max(0, Math.floor((width - groupWidth) / 2));
+
+  options.forEach((label, i) => write(cells, start + i * OPTION_GAP, String(label)));
+
+  const at = Number.isInteger(cursor) && cursor >= 0 && cursor < options.length ? cursor : 0;
+  write(cells, start + at * OPTION_GAP - SOUL_GAP_COLS, SOUL, RED);
+  return cells;
+}
+
 function textRow(job, state, row) {
-  const options = Array.isArray(job.options) ? job.options : [];
-
-  if (state.beat === 2 && options.length > 0) {
-    if (row !== CHOICE_ROW) return blanks(TEXT_COLS);
-    const cells = blanks(TEXT_COLS);
-    for (const label of options) {
-      const col = OPTION_COL[label];
-      if (typeof col === "number") write(cells, col, label);
-    }
-    // Only an option the layout knows where to place gets a soul. An
-    // unplaceable one draws no soul at all rather than one at a guessed spot.
-    const label = options[Number.isInteger(state.cursor) ? state.cursor : 0];
-    const col = OPTION_COL[label];
-    if (typeof col === "number") write(cells, col - SOUL_GAP_COLS, SOUL, RED);
-    return cells;
-  }
-
   // Her line, revealed a character at a time. The budget is spent across the
   // rows in order, so the crawl runs on through the line breaks.
   const lines = Array.isArray(job.lines) ? job.lines : [];
@@ -94,6 +106,11 @@ function textRow(job, state, row) {
 // whole cell, which would exaggerate it eightfold.
 export function buildFrame(job, state, layout, faceRows = []) {
   const rows = [];
+  // Beat 2 is the choice and nothing else — her line is gone, and so is she.
+  // The slot stays reserved rather than collapsing, so the box does not change
+  // size between the two beats.
+  const showingChoice = state?.beat === 2 && (job?.options?.length ?? 0) > 0;
+  const face = showingChoice ? [] : faceRows;
   const edge = [
     cell(FRAME, CORNER),
     ...Array.from({ length: layout.innerCols }, () => cell(FRAME, WHITE)),
@@ -105,25 +122,37 @@ export function buildFrame(job, state, layout, faceRows = []) {
   rows.push(paint(edge));
 
   for (let r = 0; r < layout.innerRows; r++) {
-    const line = [cell(FRAME, WHITE), ...blanks(PAD)];
+    const line = [cell(FRAME, WHITE)];
 
-    if (layout.faceCols > 0) {
-      const face = faceRows[r];
-      if (typeof face === "string") {
-        line.push(span(face));
-        line.push(...blanks(layout.faceCols - cellWidth(face)));
-      } else {
-        line.push(...blanks(layout.faceCols));
+    if (showingChoice) {
+      // Nothing but the choice is on this screen, so the whole inside is one
+      // field rather than a portrait slot beside a text column.
+      line.push(...(r === layout.textRow + CHOICE_ROW
+        ? choiceCells(job.options, state.cursor, layout.innerCols)
+        : blanks(layout.innerCols)));
+    } else {
+      line.push(...blanks(PAD));
+
+      if (layout.faceCols > 0) {
+        const row = face[r];
+        if (typeof row === "string") {
+          line.push(span(row));
+          line.push(...blanks(layout.faceCols - cellWidth(row)));
+        } else {
+          line.push(...blanks(layout.faceCols));
+        }
+        line.push(...blanks(GUTTER));
       }
-      line.push(...blanks(GUTTER));
+
+      const textIdx = r - layout.textRow;
+      line.push(...(textIdx >= 0 && textIdx < TEXT_ROWS
+        ? textRow(job, state, textIdx)
+        : blanks(TEXT_COLS)));
+
+      line.push(...blanks(PAD));
     }
 
-    const textIdx = r - layout.textRow;
-    line.push(...(textIdx >= 0 && textIdx < TEXT_ROWS
-      ? textRow(job, state, textIdx)
-      : blanks(TEXT_COLS)));
-
-    line.push(...blanks(PAD), cell(FRAME, WHITE));
+    line.push(cell(FRAME, WHITE));
     rows.push(paint(line));
   }
 

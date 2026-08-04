@@ -6,7 +6,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decodePng } from "../src/png.mjs";
-import { BOX, innerRight, rowY, OPTION_X } from "../src/geometry.mjs";
+import { BOX, innerRight, rowY, OPTION_X, faceOffset } from "../src/geometry.mjs";
 
 const SCALE = BOX.scale;
 const JOB = {
@@ -116,10 +116,13 @@ test("the choice row draws both options and the soul, at their declared position
   const { png } = await capture(JOB, "Z");
   const { png: plain } = await capture(JOB);
 
+  // Only the text area is compared. The portrait slot also differs between the
+  // two beats now — she is not on the choice screen — and those columns are to
+  // the left of everything this test is about.
   const changed = (row) => {
     const cols = new Set();
     for (let y = rowY(row) * SCALE; y < (rowY(row) + BOX.lineHeight) * SCALE; y++) {
-      for (let x = 0; x < png.w; x++) {
+      for (let x = BOX.textX.withPortrait * SCALE; x < png.w; x++) {
         const a = png.px(x, y), b = plain.px(x, y);
         if (a.r !== b.r || a.g !== b.g || a.b !== b.b) cols.add(Math.floor(x / SCALE));
       }
@@ -147,13 +150,41 @@ test("the choice row draws both options and the soul, at their declared position
     `choice row ends at ${cols[cols.length - 1]}, past the inner right edge`);
 });
 
+test("the portrait slot is empty on the choice screen", async () => {
+  // The choice screen is not "her line, minus the words" — she is not on it at
+  // all. Counting sprite pixels in the slot is the only check that can tell a
+  // hidden portrait from one still sitting there behind the options.
+  // The sprite's own rectangle, not the whole slot: the slot is larger than the
+  // face and clips a few white pixels of border art at its edges, which are
+  // there whether or not a portrait is. Nothing but the sprite draws here.
+  const facePixels = (png) => {
+    let drawn = 0;
+    for (let y = faceOffset.y * SCALE; y < (faceOffset.y + BOX.face.h) * SCALE; y++) {
+      for (let x = faceOffset.x * SCALE; x < (faceOffset.x + BOX.face.w) * SCALE; x++) {
+        const p = png.px(x, y);
+        if (p.a >= 128 && near(p, 255, 255, 255)) drawn++;
+      }
+    }
+    return drawn;
+  };
+
+  const { png: speaking } = await capture(JOB);
+  const { png: choosing } = await capture(JOB, "Z");
+
+  assert.ok(facePixels(speaking) > 200, "she should be drawn while she speaks");
+  assert.equal(facePixels(choosing), 0,
+    `the portrait is still drawn on the choice screen (${facePixels(choosing)} px)`);
+});
+
 test("beat 2 is its own screen: her line is gone, not merely clipped", async () => {
   // The two passes that paint text and options share coordinates, so the only
-  // honest way to assert they do not collide is to look at the pixels. A box
-  // showing the choice must be pixel-identical, above the choice row, to the
-  // same box with nothing to say.
+  // honest way to assert they do not collide is to look at the pixels. Both
+  // captures are taken AT the choice, differing only in what she had to say:
+  // if her line reaches the choice screen at all, they cannot match. The old
+  // baseline was captured at beat 1, which stopped being comparable the moment
+  // the portrait started disappearing at beat 2.
   const { png } = await capture(JOB, "Z");
-  const { png: mute } = await capture({ ...JOB, lines: [] });
+  const { png: mute } = await capture({ ...JOB, lines: [] }, "Z");
 
   for (const row of [0, 1]) {
     let differing = 0;
