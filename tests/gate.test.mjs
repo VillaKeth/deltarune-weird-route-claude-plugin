@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { writeFile, mkdir, readFile, rm, chmod } from "node:fs/promises";
+import { writeFile, mkdir, readFile, rm, chmod, rename } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
@@ -54,6 +54,50 @@ const run = (payload, env = {}) =>
   });
 
 const cleanup = (id) => rm(join(STATE_DIR, `${id}.json`), { force: true });
+
+// A state directory that saveState genuinely cannot write to, plus its own
+// seeded session file.
+//
+// Locking the FILE alone is not enough. saveState writes a temp file and
+// renames it over the target, and POSIX authorises rename against the
+// DIRECTORY, not the target's mode — so chmod 0444 on the file stops nothing
+// on Linux while genuinely failing on Windows, where replacing a read-only
+// file is refused. Both callers of this helper previously used the weaker
+// lock, and both were unsound on POSIX: one failed outright in CI, the other
+// went green while the save it was supposed to be blocking actually happened.
+//
+// Returns { file, env, locked }. When `locked` is false the platform declined
+// to be locked down and the caller must skip: the assertions cannot mean
+// anything if the write they forbid is permitted.
+const lockedStateDir = async (t, id, state) => {
+  const dir = join(tmpdir(), `weird-gate-locked-${id}`);
+  const file = join(dir, `${id}.json`);
+  t.after(async () => {
+    await chmod(dir, 0o777).catch(() => {});
+    await chmod(file, 0o666).catch(() => {});
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  await mkdir(dir, { recursive: true });
+  await writeFile(file, JSON.stringify(state), "utf8");
+  await chmod(file, 0o444);
+  await chmod(dir, 0o555);
+
+  // Probe with the exact operation saveState performs, not a plain writeFile
+  // on the target — that measures a different syscall and is what made the
+  // original probes report a lockdown that was not there.
+  const probe = join(dir, `probe-${process.pid}.tmp`);
+  let locked = true;
+  try {
+    await writeFile(probe, "x", "utf8");
+    await rename(probe, file);
+    locked = false;
+  } catch { /* expected: the directory refuses new entries */ }
+  await rm(probe, { force: true }).catch(() => {});
+  t.diagnostic(`state dir locked: ${locked}`);
+
+  return { file, locked, env: { WEIRD_ROUTE_STATE_DIR: dir } };
+};
 
 const writeTranscript = async (name, text) => {
   const path = join(tmpdir(), `weird-gate-${name}-${process.pid}.jsonl`);
@@ -223,23 +267,16 @@ test("a Stop that cannot persist its counter withholds the block entirely", asyn
   // the 25-continue ceiling stops existing. Refusing to continue is the safe
   // direction, so the block must not be emitted at all.
   const id = `test-gate-blockperm-${process.pid}`;
-  const file = join(STATE_DIR, `${id}.json`);
-  t.after(async () => { await chmod(file, 0o666).catch(() => {}); await cleanup(id); });
-
-  await seed(id, { routeActive: true, autoContinues: 3 });
-  await chmod(file, 0o444);
-
-  let readOnly = true;
-  try { await writeFile(file, "x", "utf8"); readOnly = false; } catch { /* expected */ }
-  if (!readOnly) return t.skip("filesystem ignores the read-only bit here");
+  const { file, locked, env } = await lockedStateDir(t, id, { routeActive: true, autoContinues: 3 });
+  if (!locked) return t.skip("this filesystem lets the state file be replaced regardless");
 
   const transcript = await writeTranscript("blockperm", "ok\nNEXT: keep refactoring");
   const r = await run({ hook_event_name: "Stop", session_id: id, transcript_path: transcript },
-                      renderer("refuse"));
+                      { ...renderer("refuse"), ...env });
 
   assert.equal(r.code, 0);
   assert.equal(r.out, "", "an uncountable auto-continue must not be granted");
-  assert.equal((await stateOf(id)).autoContinues, 3, "the counter did not move");
+  assert.equal(JSON.parse(await readFile(file, "utf8")).autoContinues, 3, "the counter did not move");
 });
 
 test("the NEXT: convention is pushed to the model while the route is live", async (t) => {
@@ -296,43 +333,57 @@ test("dev seams are inert without WEIRD_ROUTE_DEV", async (t) => {
 
 test("a failing saveState still delivers the decision", async (t) => {
   const id = `test-gate-eperm-${process.pid}`;
-  const file = join(STATE_DIR, `${id}.json`);
-  t.after(async () => { await chmod(file, 0o666).catch(() => {}); await cleanup(id); });
-
-  await seed(id, { routeActive: true, autoContinues: 7 });
-  await chmod(file, 0o444);
-
-  // Confirm the platform actually made it unwritable — otherwise this asserts
-  // nothing. An earlier version of this probe passed for the wrong reason.
-  let readOnly = true;
-  try { await writeFile(file, "x", "utf8"); readOnly = false; } catch { /* expected */ }
-  t.diagnostic(`state file read-only: ${readOnly}`);
-  if (!readOnly) return t.skip("filesystem ignores the read-only bit here");
+  const { file, locked, env } = await lockedStateDir(t, id, { routeActive: true, autoContinues: 7 });
+  if (!locked) return t.skip("filesystem ignores the lockdown here");
 
   const r = await run(
     { hook_event_name: "PreToolUse", session_id: id, tool_name: "Write", tool_input: { file_path: "a.txt" } },
-    renderer("refuse"));
+    { ...renderer("refuse"), ...env });
 
   assert.equal(r.code, 0);
   assert.equal(JSON.parse(r.out).hookSpecificOutput.permissionDecision, "deny",
     "the decision must reach stdout even when persisting it fails");
-  assert.equal((await stateOf(id)).autoContinues, 7, "the counter is left stale, as designed");
+
+  // Both fields, because the counter alone cannot tell a failed save from a
+  // successful one: a refusal leaves it at 7 either way. routeActive is what a
+  // successful save would have flipped to false, so it is the field that
+  // actually witnesses the write not having happened.
+  const after = JSON.parse(await readFile(file, "utf8"));
+  assert.equal(after.autoContinues, 7, "the counter is left stale, as designed");
+  assert.equal(after.routeActive, true, "the state was written after all — this asserts nothing");
 });
 
 test("override args survive a path containing spaces", async (t) => {
   const id = `test-gate-spaces-${process.pid}`;
-  t.after(() => cleanup(id));
-  await seed(id, { routeActive: true, autoContinues: 0 });
 
-  // FIXTURE's real path contains spaces in this project. A space-split arg
-  // parser silently turns it into several broken arguments, the child dies
-  // "cannot find module", and the gate refuses for entirely the wrong reason —
-  // a passing test that proves nothing.
-  assert.ok(FIXTURE.includes(" "), "this test is only meaningful from a path with spaces");
+  // A space-split arg parser silently turns one path into several broken
+  // arguments, the child dies "cannot find module", and the gate refuses for
+  // entirely the wrong reason — a passing test that proves nothing.
+  //
+  // This used to assert that FIXTURE's own path contained a space, which held
+  // only because the development checkout lives in "Deltarune Weird Route
+  // Claude Code Wrapper". CI checks out to a path with no spaces, so the
+  // precondition failed and took the test with it. Build the condition instead
+  // of depending on where the repository happens to sit.
+  const spacedDir = join(tmpdir(), `weird gate spaces ${process.pid}`);
+  const spacedFixture = join(spacedDir, "fake renderer.mjs");
+  t.after(async () => {
+    await cleanup(id);
+    await rm(spacedDir, { recursive: true, force: true }).catch(() => {});
+  });
+  await mkdir(spacedDir, { recursive: true });
+  await writeFile(spacedFixture, await readFile(FIXTURE, "utf8"), "utf8");
+  assert.ok(spacedFixture.includes(" "), "the fixture path must contain a space");
+
+  await seed(id, { routeActive: true, autoContinues: 0 });
 
   const r = await run(
     { hook_event_name: "PreToolUse", session_id: id, tool_name: "Write", tool_input: { file_path: "a.txt" } },
-    renderer("proceed"));
+    {
+      WEIRD_ROUTE_DEV: "1",
+      WEIRD_ROUTE_RENDERER_CMD: process.execPath,
+      WEIRD_ROUTE_RENDERER_ARGS: JSON.stringify([spacedFixture, "proceed"]),
+    });
 
   assert.equal(JSON.parse(r.out).hookSpecificOutput.permissionDecision, "allow",
     "the fixture must actually run — a refuse here means the args were mangled");
