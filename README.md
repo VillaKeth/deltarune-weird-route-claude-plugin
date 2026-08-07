@@ -1,5 +1,8 @@
 # Deltarune Weird Route
 
+[![tests](https://github.com/VillaKeth/deltarune-weird-route-claude-plugin/actions/workflows/test.yml/badge.svg)](https://github.com/VillaKeth/deltarune-weird-route-claude-plugin/actions/workflows/test.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A Claude Code plugin that gates Claude's autonomy behind Deltarune's Weird Route
 dialogue box. Noelle states what Claude is about to do; you move the soul with the
 arrow keys and answer **Proceed** or **Refuse**.
@@ -159,6 +162,11 @@ and cannot land on the wrong monitor by construction.
 npm test                    # 173 tests, node --test
 node tools/show-box.mjs     # see the box without a gate
 ```
+
+Twelve of those spawn the real Electron window and need `assets/` to draw. Without
+the assets they report as **skipped**, never as passed — a renderer with no border
+art refuses, and several of those cases expect a refusal, so a pass would mean
+nothing. A clean clone therefore runs 161 and skips 12, which is what CI does.
 
 `TEST_MODE=1` gates every tool regardless of the route flag, so the box fires in
 seconds instead of on a real gate:

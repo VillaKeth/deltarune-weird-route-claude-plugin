@@ -1,0 +1,43 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing should not hide the result on the other.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [24]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # Electron is a devDependency, and its postinstall pulls a ~350 MB binary.
+      # Nothing here needs it: assets/ is gitignored copyrighted material, so the
+      # twelve tests that spawn a real window skip on a clone regardless. Skipping
+      # the download turns a multi-minute install into seconds.
+      - name: Install
+        run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+      # Expect 161 passed and 12 skipped. The skips are the Electron/asset tests
+      # and are reported as skips, never as passes — see tests/fixtures/needs-assets.mjs.
+      - name: Test
+        run: npm test

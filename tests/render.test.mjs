@@ -6,6 +6,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decodePng } from "../src/png.mjs";
+import { SKIP } from "./fixtures/needs-assets.mjs";
 import { BOX, innerRight, rowY, OPTION_X, faceOffset } from "../src/geometry.mjs";
 
 const SCALE = BOX.scale;
@@ -39,7 +40,7 @@ const capture = (job, keys) => new Promise((resolve, reject) => {
 
 const near = (p, r, g, b) => Math.abs(p.r - r) < 6 && Math.abs(p.g - g) < 6 && Math.abs(p.b - b) < 6;
 
-test("the rendered box matches the declared geometry", async () => {
+test("the rendered box matches the declared geometry", { skip: SKIP }, async () => {
   const { png } = await capture(JOB);
 
   assert.equal(png.w, BOX.width * SCALE);
@@ -109,7 +110,7 @@ test("the rendered box matches the declared geometry", async () => {
   assert.equal(glyphColumns(2).length, 0, "row 2 drew text it was not given");
 });
 
-test("the choice row draws both options and the soul, at their declared positions", async () => {
+test("the choice row draws both options and the soul, at their declared positions", { skip: SKIP }, async () => {
   // Every other pixel assertion captures at beat 1, which leaves the part of
   // the box the user actually operates — the labels and the soul — visually
   // unverified. One Z advances to the choice; a second would confirm it.
@@ -150,7 +151,7 @@ test("the choice row draws both options and the soul, at their declared position
     `choice row ends at ${cols[cols.length - 1]}, past the inner right edge`);
 });
 
-test("the portrait slot is empty on the choice screen", async () => {
+test("the portrait slot is empty on the choice screen", { skip: SKIP }, async () => {
   // The choice screen is not "her line, minus the words" — she is not on it at
   // all. Counting sprite pixels in the slot is the only check that can tell a
   // hidden portrait from one still sitting there behind the options.
@@ -176,7 +177,7 @@ test("the portrait slot is empty on the choice screen", async () => {
     `the portrait is still drawn on the choice screen (${facePixels(choosing)} px)`);
 });
 
-test("beat 2 is its own screen: her line is gone, not merely clipped", async () => {
+test("beat 2 is its own screen: her line is gone, not merely clipped", { skip: SKIP }, async () => {
   // The two passes that paint text and options share coordinates, so the only
   // honest way to assert they do not collide is to look at the pixels. Both
   // captures are taken AT the choice, differing only in what she had to say:

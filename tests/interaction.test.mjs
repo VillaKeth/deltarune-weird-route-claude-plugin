@@ -5,20 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { join, dirname } from "node:path";
-
-// assets/ is gitignored, and main.mjs refuses when the border or sprite is
-// missing. Two of these cases expect "refuse", so on a fresh clone they would
-// pass for entirely the wrong reason — the expected value IS the failure value.
-// Fail loudly instead.
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-for (const asset of ["border.png", "noelle/trance.png", "noelle/speechless.png"]) {
-  if (!existsSync(join(ROOT, "assets", asset))) {
-    throw new Error(`assets/${asset} is missing — these tests cannot prove anything without it`);
-  }
-}
+import { SKIP } from "./fixtures/needs-assets.mjs";
 
 const JOB = {
   kind: "gate", face: "trance",
@@ -46,27 +33,27 @@ const press = (keys, job = JOB, extraEnv = {}) => new Promise((resolve, reject) 
   child.stdin.end(JSON.stringify(job));
 });
 
-test("Escape refuses immediately, before any choice is even shown", async () => {
+test("Escape refuses immediately, before any choice is even shown", { skip: SKIP }, async () => {
   assert.equal(await press(["Escape"]), "refuse");
 });
 
-test("Z skips the crawl, Z opens the choice, Z confirms Proceed", async () => {
+test("Z skips the crawl, Z opens the choice, Z confirms Proceed", { skip: SKIP }, async () => {
   assert.equal(await press(["Z", "Z", "Z"]), "proceed");
 });
 
-test("moving the soul right and confirming refuses", async () => {
+test("moving the soul right and confirming refuses", { skip: SKIP }, async () => {
   assert.equal(await press(["Z", "Z", "Right", "Z"]), "refuse");
 });
 
-test("moving right then back left confirms Proceed again", async () => {
+test("moving right then back left confirms Proceed again", { skip: SKIP }, async () => {
   assert.equal(await press(["Z", "Z", "Right", "Left", "Z"]), "proceed");
 });
 
-test("the soul clamps at the right end rather than wrapping to Proceed", async () => {
+test("the soul clamps at the right end rather than wrapping to Proceed", { skip: SKIP }, async () => {
   assert.equal(await press(["Z", "Z", "Right", "Right", "Right", "Z"]), "refuse");
 });
 
-test("X returns to her line, and the soul is where it was left", async () => {
+test("X returns to her line, and the soul is where it was left", { skip: SKIP }, async () => {
   // Z Z opens the choice, Right selects Refuse, X goes back to her line. The
   // following Z only re-opens the choice — it does not confirm — so the final
   // Z is what answers, and it answers on the remembered position.
@@ -78,12 +65,12 @@ test("X returns to her line, and the soul is where it was left", async () => {
   assert.equal(await press(["Z", "Z", "X", "Z", "Z"]), "proceed");
 });
 
-test("the route-complete box is dismissed by Z and reports refuse", async () => {
+test("the route-complete box is dismissed by Z and reports refuse", { skip: SKIP }, async () => {
   const done = { kind: "complete", face: "speechless", lines: ["* ...it's done, Kris."], options: [], default: 0, sfx: null };
   assert.equal(await press(["Z"], done), "refuse");
 });
 
-test("the failsafe force-closes and refuses with no key ever pressed", async () => {
+test("the failsafe force-closes and refuses with no key ever pressed", { skip: SKIP }, async () => {
   // The spec's hard teardown: an independent timer must resolve the window
   // regardless of state. Never ship a path where a bug leaves an un-closable
   // always-on-top window on someone's screen.
