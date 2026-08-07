@@ -226,3 +226,14 @@ than the plugin not working at all.
 
 The plugin makes **no model calls**. The `NEXT:` marker is read from the transcript as
 a plain string.
+
+## License
+
+The code is MIT licensed — see [LICENSE](LICENSE). Copyright © 2026 VillaKeth.
+
+**The MIT licence covers this repository's code and nothing else.** Deltarune, its
+sprites, its font and its sound effects are the property of Toby Fox. None of that
+material is in this repository, none of it is redistributed here, and no permission to
+use it is granted or implied by the licence above. The `assets/` directory you supply
+is yours to source, and the terms attached to it are Toby Fox's, not mine. This is an
+unofficial fan project with no affiliation with or endorsement by Toby Fox.

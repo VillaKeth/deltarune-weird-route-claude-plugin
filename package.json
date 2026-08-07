@@ -2,6 +2,12 @@
   "name": "deltarune-weird-route",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
+  "author": "VillaKeth",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VillaKeth/deltarune-weird-route-claude-plugin.git"
+  },
   "type": "module",
   "scripts": {
     "test": "node --test",
