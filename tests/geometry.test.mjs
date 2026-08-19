@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BOX, rowY, MAX_CHARS, wrapLines, assertFits } from "../src/geometry.mjs";
+import { BOX, rowY, MAX_CHARS, wrapLines, assertFits, OPTION_X, innerRight } from "../src/geometry.mjs";
 
 test("box constants match the spec", () => {
   assert.equal(BOX.width, 297);
@@ -68,4 +68,64 @@ test("the continuation indent counts against the budget", () => {
 test("assertFits rejects a run past the inner right edge", () => {
   assert.throws(() => assertFits(196, "ThisIsFarTooLongToFit", "Refuse"), /inner right edge/);
   assert.equal(assertFits(196, "Refuse", "Refuse"), 196);
+});
+
+// ---------------------------------------------------------------------------
+// The choice row.
+//
+// Beat 2 clears her line and her portrait, so the choice is alone in an
+// otherwise empty box. Both renderers inherited positions that were chosen when
+// text sat above the options, and measuring a real capture showed what that
+// looks like now: 64 px of dead space left of the soul against a 51 px gap
+// between the two labels, and 41 px above the glyphs against 20 below.
+// ---------------------------------------------------------------------------
+
+const choiceMetrics = () => {
+  const innerTop = BOX.border;
+  const innerBottom = BOX.height - BOX.border;
+  const soulLeft = OPTION_X.Proceed - BOX.soul - BOX.soulGap;
+  const proceedEnd = OPTION_X.Proceed + "Proceed".length * BOX.advance;
+  const refuseEnd = OPTION_X.Refuse + "Refuse".length * BOX.advance;
+  return {
+    left: soulLeft - BOX.border,
+    gap: OPTION_X.Refuse - proceedEnd,
+    right: innerRight - refuseEnd,
+    above: BOX.choiceY - innerTop,
+    below: innerBottom - (BOX.choiceY + BOX.lineHeight),
+  };
+};
+
+test("the two options are further apart than they are from the walls", () => {
+  // The complaint, stated as geometry: a reader should see two choices with
+  // room between them, not two words huddled together in the right half.
+  const { left, gap, right } = choiceMetrics();
+  assert.ok(gap > left, `gap ${gap} is not wider than the ${left} px left margin`);
+  assert.ok(gap > right, `gap ${gap} is not wider than the ${right} px right margin`);
+});
+
+test("the choice row sits level in the box, with equal air on both sides", () => {
+  const { left, right } = choiceMetrics();
+  assert.ok(Math.abs(left - right) <= 4,
+    `the row is lopsided: ${left} px left, ${right} px right`);
+});
+
+test("the soul never reaches through the frame", () => {
+  // Moving Proceed left is bounded: the soul hangs a full soul-width plus the
+  // declared gap to its left, and the frame is only BOX.border thick.
+  const soulLeft = OPTION_X.Proceed - BOX.soul - BOX.soulGap;
+  assert.ok(soulLeft >= BOX.border, `the soul starts at ${soulLeft}, inside the ${BOX.border} px frame`);
+});
+
+test("the last option still fits inside the inner right edge", () => {
+  const refuseEnd = OPTION_X.Refuse + "Refuse".length * BOX.advance;
+  assert.ok(refuseEnd <= innerRight, `Refuse ends at ${refuseEnd}, past ${innerRight}`);
+});
+
+test("the lone choice row is centred vertically, not left on the bottom text row", () => {
+  // rowY(2) is the third of three text rows. That was right while her line
+  // filled the two rows above it; on a screen that has nothing else, it just
+  // reads as bottom-heavy.
+  const { above, below } = choiceMetrics();
+  assert.ok(Math.abs(above - below) <= 1,
+    `the row is bottom-heavy: ${above} px above, ${below} px below`);
 });

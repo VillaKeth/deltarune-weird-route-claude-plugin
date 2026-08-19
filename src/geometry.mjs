@@ -16,6 +16,12 @@ export const BOX = Object.freeze({
   advance: 8,          // measured: Determination Mono Web is true monospace
   soul: 16,
   soulGap: 6,                    // space between the soul and the label it points at
+  // Beat 2 clears her line AND her portrait, so the choice is alone in an
+  // empty box. It used to be drawn on rowY(2), the last of the three text
+  // rows, which was right while her line filled the two rows above it — on a
+  // screen with nothing else it measured 41 px of air above the glyphs and 20
+  // below. Centring the row in the inner area gives 26 and 26.
+  choiceY: 33,
   face: Object.freeze({ w: 56, h: 61 }),   // every assets/noelle/*.png, measured
   scale: 3,                      // on-screen magnification of the whole box
   cornerColor: "rgb(170,255,230)",
@@ -25,7 +31,12 @@ export const BOX = Object.freeze({
 // Where each option label starts on the choice row. Lives here, not in the
 // interaction module: these are pixel positions, and the spec requires every
 // pixel value be declared exactly once.
-export const OPTION_X = Object.freeze({ Proceed: 91, Refuse: 196 });
+// Measured from a real capture, these were 64 px of dead space left of the soul
+// against a 51 px gap between the labels: the two choices huddled in the right
+// half of an empty box with the widest margin behind them. Each label's block —
+// soul, gap, glyphs — is now centred in its own half of the inner width, which
+// puts 32 px outside Proceed, 89 px between, and 36 px outside Refuse.
+export const OPTION_X = Object.freeze({ Proceed: 61, Refuse: 206 });
 
 // The sprite is centred in its slot. Derived rather than written as 12,11 so a
 // change to either the slot or the sprite size stays consistent.

@@ -78,7 +78,7 @@ const drawText = (revealed, beat) => {
 };
 
 const drawChoice = (beat, cursor) => {
-  const { job, box, rows, optionX } = ctx;
+  const { job, box, optionX } = ctx;
   const host = $("options");
   const soul = $("soul");
 
@@ -92,7 +92,7 @@ const drawChoice = (beat, cursor) => {
     .map((label) => {
       const x = optionX[label];
       if (typeof x !== "number") return "";
-      return `<span class="t" style="left:${x}px;top:${rows[2]}px">${escapeHtml(label)}</span>`;
+      return `<span class="t" style="left:${x}px;top:${box.choiceY}px">${escapeHtml(label)}</span>`;
     })
     .join("");
 
@@ -102,7 +102,7 @@ const drawChoice = (beat, cursor) => {
   soul.innerHTML = soulSvg(box.soul);
   // One soul-width plus the declared gap, left of its label.
   soul.style.left = `${x - box.soul - box.soulGap}px`;
-  soul.style.top = `${rows[2]}px`;
+  soul.style.top = `${box.choiceY}px`;
   soul.hidden = false;
 };
 

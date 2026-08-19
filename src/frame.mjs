@@ -57,7 +57,10 @@ const write = (cells, at, text, color = WHITE) => {
 
 // The row of the text area that carries the choice — row 2 of the three, the
 // same row index the popup uses.
-const CHOICE_ROW = TEXT_ROWS - 1;
+// The middle text row, not the last. Beat 2 has nothing above the choice to
+// balance it against, so the bottom row reads as bottom-heavy — the same
+// reason BOX.choiceY exists for the popup.
+const CHOICE_ROW = Math.floor((TEXT_ROWS - 1) / 2);
 
 // What the text area holds on one row. Beat 2 is its own screen: her line is
 // gone and only the choice remains, exactly as the popup does it.

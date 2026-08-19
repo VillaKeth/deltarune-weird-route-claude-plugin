@@ -22,12 +22,18 @@ export const TEXT_ROWS = MAX_ROWS;
 export const PAD = 1;
 export const GUTTER = 2;
 
-// Where each label sits, as an offset in characters from the start of the text
-// area. The pixel positions divided by the character advance — the same
+// Where each label sits, as an offset in characters from the inner edge of the
+// box. The pixel positions divided by the character advance — the same
 // relationship the popup uses, expressed in the unit this renderer draws in.
+//
+// Measured from BOX.border, NOT from textX.withPortrait. The text column is
+// offset right to clear the portrait, and beat 2 has no portrait: taking the
+// text column as the origin put Proceed at a negative column once it moved left
+// of it. Only the difference between these is used downstream, but a column
+// that cannot exist is a trap for the next reader.
 export const OPTION_COL = Object.freeze(
   Object.fromEntries(Object.entries(OPTION_X).map(
-    ([label, x]) => [label, Math.round((x - BOX.textX.withPortrait) / BOX.advance)])));
+    ([label, x]) => [label, Math.round((x - BOX.border) / BOX.advance)])));
 
 // The soul sits its own width plus the declared gap to the left of its label.
 // One cell is one character, so that distance in characters is the distance in
