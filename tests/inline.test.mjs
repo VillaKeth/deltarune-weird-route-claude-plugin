@@ -9,7 +9,7 @@ import { initialState, applyKey, tick, place } from "../src/scene.mjs";
 import { buildFrame } from "../src/frame.mjs";
 import { layout, OPTION_COL, SOUL_GAP_COLS, TEXT_COLS, PAD } from "../src/cells.mjs";
 import { stripAnsi, halfBlocks } from "../src/sprite.mjs";
-import { BOX, MAX_CHARS } from "../src/geometry.mjs";
+import { BOX, MAX_CHARS, OPTION_X } from "../src/geometry.mjs";
 
 const JOB = {
   kind: "gate", face: "trance",
@@ -234,12 +234,26 @@ test("buildFrame never throws on a malformed job", () => {
 // ------------------------------------------------------------------ the layout
 
 test("the option columns are derived from the declared pixel positions", () => {
-  // Not restated: the pixel X of each label, less where the text starts,
-  // divided by the character advance.
-  assert.equal(OPTION_COL.Proceed, Math.round((91 - BOX.textX.withPortrait) / BOX.advance));
+  // Not restated: the pixel X of each label, less the frame, divided by the
+  // character advance. Read from OPTION_X rather than a literal, so moving a
+  // label cannot leave this test asserting a position nothing uses.
+  for (const [label, x] of Object.entries(OPTION_X)) {
+    assert.equal(OPTION_COL[label], Math.round((x - BOX.border) / BOX.advance));
+    assert.ok(OPTION_COL[label] >= 0, `${label} is at column ${OPTION_COL[label]}`);
+  }
   assert.ok(OPTION_COL.Refuse > OPTION_COL.Proceed);
-  assert.ok(OPTION_COL.Refuse + "Refuse".length <= TEXT_COLS, "Refuse runs past the text area");
   assert.equal(TEXT_COLS, MAX_CHARS.withPortrait);
+});
+
+test("the whole choice group fits the inside of the box", () => {
+  // The bound that actually matters. choiceCells centres soul + labels across
+  // layout.innerCols, so the text column — which is offset right to clear a
+  // portrait that beat 2 does not draw — was never the right limit.
+  const { innerCols } = layout(BIG);
+  const gap = OPTION_COL.Refuse - OPTION_COL.Proceed;
+  const groupWidth = SOUL_GAP_COLS + gap + "Refuse".length;
+  assert.ok(groupWidth <= innerCols,
+    `the choice needs ${groupWidth} columns and the box has ${innerCols}`);
 });
 
 test("the sprite shrinks by whole numbers until the box fits the terminal", () => {

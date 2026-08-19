@@ -114,41 +114,61 @@ test("the choice row draws both options and the soul, at their declared position
   // Every other pixel assertion captures at beat 1, which leaves the part of
   // the box the user actually operates — the labels and the soul — visually
   // unverified. One Z advances to the choice; a second would confirm it.
+  //
+  // Asserted directly against the declared geometry rather than by diffing the
+  // two beats. The choice now spans the portrait slot, which is empty on this
+  // screen and drawn on the other, so a diff reports her absence as if it were
+  // the choice row and the comparison stops meaning anything.
   const { png } = await capture(JOB, "Z");
-  const { png: plain } = await capture(JOB);
 
-  // Only the text area is compared. The portrait slot also differs between the
-  // two beats now — she is not on the choice screen — and those columns are to
-  // the left of everything this test is about.
-  const changed = (row) => {
+  const band = (y) => y >= BOX.choiceY * SCALE && y < (BOX.choiceY + BOX.lineHeight) * SCALE;
+  const glyphCols = (from, to) => {
     const cols = new Set();
-    for (let y = rowY(row) * SCALE; y < (rowY(row) + BOX.lineHeight) * SCALE; y++) {
-      for (let x = BOX.textX.withPortrait * SCALE; x < png.w; x++) {
-        const a = png.px(x, y), b = plain.px(x, y);
-        if (a.r !== b.r || a.g !== b.g || a.b !== b.b) cols.add(Math.floor(x / SCALE));
+    for (let x = from * SCALE; x < to * SCALE; x++) {
+      for (let y = BOX.choiceY * SCALE; y < (BOX.choiceY + BOX.lineHeight) * SCALE; y++) {
+        const p = png.px(x, y);
+        if (p.a >= 128 && near(p, 255, 255, 255)) { cols.add(Math.floor(x / SCALE)); break; }
       }
     }
     return [...cols].sort((m, n) => m - n);
   };
 
-  const cols = changed(2);
-  assert.ok(cols.length > 20, `choice row only changed in ${cols.length} columns`);
+  // Each label draws where geometry says it does, and nowhere else.
+  for (const [label, x] of Object.entries(OPTION_X)) {
+    const cols = glyphCols(x, x + label.length * BOX.advance);
+    assert.ok(cols.length >= label.length * 3,
+      `${label} drew ${cols.length} glyph columns at x=${x}`);
+  }
 
-  // The soul is red and sits one soul-width plus the gap left of "Proceed".
+  // The soul is red and sits one soul-width plus the gap left of "Proceed",
+  // on the choice row rather than the last text row.
   const soulX = OPTION_X.Proceed - BOX.soul - BOX.soulGap;
   let red = 0;
-  for (let y = rowY(2) * SCALE; y < (rowY(2) + BOX.soul) * SCALE; y++) {
+  for (let y = BOX.choiceY * SCALE; y < (BOX.choiceY + BOX.soul) * SCALE; y++) {
     for (let x = soulX * SCALE; x < (soulX + BOX.soul) * SCALE; x++) {
       const p = png.px(x, y);
       if (p.r > 200 && p.g < 60 && p.b < 60) red++;
     }
   }
-  assert.ok(red > 300, `soul drew ${red} red px at x=${soulX} — not where geometry says`);
+  assert.ok(red > 300, `soul drew ${red} red px at x=${soulX}, y=${BOX.choiceY} — not where geometry says`);
 
-  // Both labels must be inside the box.
-  assert.ok(cols[0] >= soulX, `choice row starts at ${cols[0]}, left of the soul`);
-  assert.ok(cols[cols.length - 1] < innerRight,
-    `choice row ends at ${cols[cols.length - 1]}, past the inner right edge`);
+  // Nothing is drawn outside the group, on either side.
+  assert.equal(glyphCols(BOX.border, soulX).length, 0, "something drew left of the soul");
+  const refuseEnd = OPTION_X.Refuse + "Refuse".length * BOX.advance;
+  assert.equal(glyphCols(refuseEnd, innerRight).length, 0, "something drew past the last label");
+
+  // And it is on the declared row rather than the last text row, where it used
+  // to sit. Checked against rowY(2) specifically: scanning every row outside the
+  // band instead counts the frame's own white border art, which is not text.
+  let stale = 0;
+  for (let y = rowY(2) * SCALE; y < (rowY(2) + BOX.lineHeight) * SCALE; y++) {
+    if (band(y)) continue;                       // the two rows overlap slightly
+    for (let x = OPTION_X.Proceed * SCALE; x < refuseEnd * SCALE; x++) {
+      const p = png.px(x, y);
+      if (p.a >= 128 && near(p, 255, 255, 255)) stale++;
+    }
+  }
+  assert.equal(stale, 0, `${stale} glyph px still drew on the old bottom text row`);
 });
 
 test("the portrait slot is empty on the choice screen", { skip: SKIP }, async () => {
@@ -158,9 +178,16 @@ test("the portrait slot is empty on the choice screen", { skip: SKIP }, async ()
   // The sprite's own rectangle, not the whole slot: the slot is larger than the
   // face and clips a few white pixels of border art at its edges, which are
   // there whether or not a portrait is. Nothing but the sprite draws here.
+  // Rows the choice occupies are excluded. The choice is centred across the
+  // whole inside of the box now, not tucked into the text column, so its labels
+  // genuinely cross the slot her face would fill — and a white glyph counts the
+  // same as a white outline. Her sprite is 61 px tall against an 18 px row, so
+  // more than forty rows are still hers alone, which is ample: she draws
+  // hundreds of pixels there when she is present and none when she is not.
   const facePixels = (png) => {
     let drawn = 0;
     for (let y = faceOffset.y * SCALE; y < (faceOffset.y + BOX.face.h) * SCALE; y++) {
+      if (y >= BOX.choiceY * SCALE && y < (BOX.choiceY + BOX.lineHeight) * SCALE) continue;
       for (let x = faceOffset.x * SCALE; x < (faceOffset.x + BOX.face.w) * SCALE; x++) {
         const p = png.px(x, y);
         if (p.a >= 128 && near(p, 255, 255, 255)) drawn++;
