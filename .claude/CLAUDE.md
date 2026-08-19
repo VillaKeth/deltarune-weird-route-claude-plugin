@@ -69,6 +69,21 @@ means onto the neighbouring monitor. Corner anchors cascade **inward**, because 
 box anchored `MARGIN` from an edge has only `MARGIN` of room before it. A display
 left of the primary one has a **negative** origin, so nothing may clamp against zero.
 
+**Several monitors can be ONE display.** NVIDIA Surround / Eyefinity / some KVMs
+stitch panels into a single logical desktop: measured here, two 1920x1080 DELL
+SE2425H reported as one 3840x1080 `WinDisc`, Electron `display count: 1`. Picking
+a display is then a no-op, and *centring* lands on the bezel — 445 px of the box
+on one panel, 446 on the other. `panelsIn()` splits the work area back up by
+rounding its aspect ratio (3840x1032 → 2.09 → 2; a real 3440x1440 ultrawide →
+1.39 → 1, untouched). Only **centre** is panel-relative; corners still address the
+whole desktop so they can still name a specific screen.
+
+**`GetConsoleWindow()` cannot locate the terminal.** Measured, not assumed: under
+ConPTY it returns class `PseudoConsoleWindow` with `GetWindowRect` = 0,0,0,0, so
+`MonitorFromWindow` only ever resolves whatever monitor holds the origin. There is
+no way to ask which display holds the terminal that spawned a hook. Do not rebuild
+this — the cursor is the only signal, which is why it is passed to `placeWindow`.
+
 **`src/cells.mjs` owns cell values the way `geometry.mjs` owns pixel values.** The
 two spaces do not share a scale — text is 8 px per column but the sprite is 1 px per
 column — so only the *relationships* cross over, never the numbers.

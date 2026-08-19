@@ -156,6 +156,35 @@ terminal that spawned it. If your cursor habitually rests on a different screen 
 the terminal you type in, use the inline renderer, which draws in the terminal itself
 and cannot land on the wrong monitor by construction.
 
+### Spanned displays
+
+NVIDIA Surround, AMD Eyefinity and some KVMs stitch several physical panels into
+**one logical display**. Windows then reports a single desktop and Electron agrees —
+measured here, two 1920x1080 DELL SE2425H on a Quadro P1000 arrive as one 3840x1080
+display named `WinDisc`, with `display count: 1`.
+
+Picking a display is meaningless in that case, because there is only one. Centring it
+is worse: dead centre of a 3840-wide desktop is x=1475, and the bezel is at x=1920, so
+the 891 px box was cut almost exactly in half — 445 px on the left panel, 446 px on the
+right.
+
+The box now splits a spanned desktop back into equal panels and centres inside the one
+holding the **mouse cursor**. Within a single spanned display the cursor is finally a
+reliable signal, because the panels share one coordinate space, so cursor x alone names
+the screen. With no usable cursor it uses the leftmost panel — wholly on one screen
+beats sliced down the middle.
+
+Detection is the ratio of the work area, rounded: 3840x1032 is 2.09 panels wide, so
+two. A genuine 3440x1440 ultrawide is 1.39, so one, and is left centred exactly as
+before. The threshold that falls out is 2.67:1. A 32:9 super-ultrawide (5120x1440) is
+above it and will be treated as two panels — the box sits centred in one half rather
+than dead centre, still wholly on screen.
+
+Corner placements are deliberately **not** panel-relative: they still address the whole
+desktop, which leaves `top-left`/`bottom-left` meaning the left panel and
+`top-right`/`bottom-right` the right one. That is the only way to name a specific screen
+once the OS has collapsed them into one.
+
 ## Develop
 
 ```powershell
