@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { placeWindow, MARGIN, CASCADE_WRAP } from "../src/window-place.mjs";
+import { placeWindow, panelsIn, MARGIN, CASCADE_WRAP } from "../src/window-place.mjs";
 import { BOX } from "../src/geometry.mjs";
 
 // The real window, at the scale it actually opens at.
@@ -119,4 +119,118 @@ test("placement never throws, whatever it is handed", () => {
 test("the margin is honoured at the corners when there is room for it", () => {
   const at = placeWindow({ area: RIGHT, size: SIZE, pos: "top-left", seed: 0 });
   assert.deepEqual(at, { x: RIGHT.x + MARGIN, y: RIGHT.y + MARGIN });
+});
+
+// ---------------------------------------------------------------------------
+// Spanned displays.
+//
+// NVIDIA Surround, AMD Eyefinity and some KVMs stitch several physical panels
+// into ONE logical display. Measured on the machine this was written for: two
+// DELL SE2425H on a Quadro P1000, reported by both Windows and Electron as a
+// single 3840x1080 desktop named "WinDisc" — display count 1, not 2. The
+// cursor-proxy code that picks a display therefore never gets a choice, and
+// "centre" centres across the SPAN, which is the bezel. At this size that put
+// 445 px of the box on the left panel and 446 px on the right.
+// ---------------------------------------------------------------------------
+
+// A 48 px taskbar, as measured — workArea, not bounds.
+const SPAN2 = { x: 0, y: 0, width: 3840, height: 1032 };
+const SPAN3 = { x: 0, y: 0, width: 5760, height: 1032 };
+// A span whose origin is negative, the case that made clamping against zero wrong.
+const SPAN_LEFT = { x: -3840, y: 0, width: 3840, height: 1032 };
+// A genuine single ultrawide. 21:9 is one panel and must NOT be split.
+const ULTRAWIDE = { x: 0, y: 0, width: 3440, height: 1392 };
+
+const panelOf = (area, i, n) => ({
+  x: area.x + Math.round((area.width / n) * i),
+  y: area.y,
+  width: Math.round(area.width / n),
+  height: area.height,
+});
+
+test("a spanned desktop counts its panels, and a single display counts one", () => {
+  assert.equal(panelsIn(SPAN2), 2);
+  assert.equal(panelsIn(SPAN3), 3);
+  assert.equal(panelsIn(SPAN_LEFT), 2);
+  // The regression that matters most: a 21:9 and a 16:9 are ONE panel each.
+  assert.equal(panelsIn(ULTRAWIDE), 1);
+  assert.equal(panelsIn(SMALL), 1);
+  assert.equal(panelsIn(LEFT), 1);
+  assert.equal(panelsIn(RIGHT), 1);
+});
+
+test("centre on a spanned desktop puts the box inside one panel, not across the seam", () => {
+  // The actual bug: x = round((3840-891)/2) = 1475, and the bezel is at 1920.
+  const at = placeWindow({ area: SPAN2, size: SIZE, pos: "center", seed: 0, cursor: { x: 2500, y: 500 } });
+  assert.ok(at.x >= 1920, `box starts at ${at.x}, left of the seam at 1920`);
+  assert.ok(at.x + SIZE.w <= 3840, `box ends at ${at.x + SIZE.w}, past the desktop`);
+});
+
+test("the cursor decides which panel the box lands on", () => {
+  const left = placeWindow({ area: SPAN2, size: SIZE, pos: "center", seed: 0, cursor: { x: 100, y: 500 } });
+  const right = placeWindow({ area: SPAN2, size: SIZE, pos: "center", seed: 0, cursor: { x: 3000, y: 500 } });
+  assert.ok(fits(left, panelOf(SPAN2, 0, 2)), `cursor on panel 0 placed the box at ${left.x}`);
+  assert.ok(fits(right, panelOf(SPAN2, 1, 2)), `cursor on panel 1 placed the box at ${right.x}`);
+});
+
+test("every cascade slot stays inside the chosen panel", () => {
+  // Clamping to the whole span would let the cascade walk the box over the
+  // bezel, which is the same visible failure the corner cascade bug produced.
+  for (let seed = 0; seed < CASCADE_WRAP * 2; seed++) {
+    const at = placeWindow({ area: SPAN2, size: SIZE, pos: "center", seed, cursor: { x: 2500, y: 500 } });
+    assert.ok(fits(at, panelOf(SPAN2, 1, 2)), `seed ${seed} put the box at ${at.x}, outside panel 1`);
+  }
+});
+
+test("a three-panel span picks the panel the cursor is on, not the middle one", () => {
+  // Deliberately the OUTER panel. Centring a three-panel span across the whole
+  // desktop already lands in the middle panel by accident, so a middle-panel
+  // assertion passes without the feature and proves nothing.
+  const at = placeWindow({ area: SPAN3, size: SIZE, pos: "center", seed: 0, cursor: { x: 5000, y: 500 } });
+  assert.ok(fits(at, panelOf(SPAN3, 2, 3)), `box at ${at.x} is not inside the third panel`);
+});
+
+test("a span left of the primary display keeps the box on its own panel", () => {
+  const at = placeWindow({ area: SPAN_LEFT, size: SIZE, pos: "center", seed: 0, cursor: { x: -1000, y: 500 } });
+  assert.ok(fits(at, panelOf(SPAN_LEFT, 1, 2)), `box at ${at.x} is not on the right panel of a negative-origin span`);
+});
+
+test("a cursor outside the desktop still lands the box on a real panel", () => {
+  for (const x of [-99999, 99999, 3840, -1]) {
+    const at = placeWindow({ area: SPAN2, size: SIZE, pos: "center", seed: 0, cursor: { x, y: 0 } });
+    const onOne = fits(at, panelOf(SPAN2, 0, 2)) || fits(at, panelOf(SPAN2, 1, 2));
+    assert.ok(onOne, `cursor x=${x} put the box at ${at.x}, straddling or off the desktop`);
+  }
+});
+
+test("with no cursor the box still lands wholly on one panel rather than on the bezel", () => {
+  // No signal is not a reason to slice the box in half. Panel 0 is the choice.
+  const at = placeWindow({ area: SPAN2, size: SIZE, pos: "center", seed: 0 });
+  assert.ok(fits(at, panelOf(SPAN2, 0, 2)), `box at ${at.x} is not wholly on panel 0`);
+});
+
+test("an ultrawide is centred across the whole panel, exactly as before", () => {
+  // 3440x1392 is 2.47:1 — one physical screen. Splitting it would be a
+  // regression for every ultrawide owner, and there is no bezel to avoid.
+  const at = placeWindow({ area: ULTRAWIDE, size: SIZE, pos: "center", seed: 0, cursor: { x: 3000, y: 500 } });
+  assert.equal(at.x, ULTRAWIDE.x + Math.round((ULTRAWIDE.width - SIZE.w) / 2));
+});
+
+test("corner placements still span the whole desktop, so they can reach either panel", () => {
+  // Deliberately NOT panel-relative: on a span, left corners are the left
+  // panel and right corners are the right one, which is a useful way to ask
+  // for a specific screen by name.
+  const left = placeWindow({ area: SPAN2, size: SIZE, pos: "top-left", seed: 0, cursor: { x: 3000, y: 500 } });
+  const right = placeWindow({ area: SPAN2, size: SIZE, pos: "top-right", seed: 0, cursor: { x: 100, y: 500 } });
+  assert.equal(left.x, SPAN2.x + MARGIN);
+  assert.equal(right.x, SPAN2.x + SPAN2.width - SIZE.w - MARGIN);
+});
+
+test("span placement never throws on a junk cursor", () => {
+  const junk = [null, {}, { x: NaN, y: NaN }, { x: "1000" }, { x: Infinity, y: 0 }, "nope", 42];
+  for (const cursor of junk) {
+    const at = placeWindow({ area: SPAN2, size: SIZE, pos: "center", seed: 0, cursor });
+    assert.ok(Number.isFinite(at.x) && Number.isFinite(at.y),
+      `cursor ${JSON.stringify(cursor)} produced ${at.x},${at.y}`);
+  }
 });

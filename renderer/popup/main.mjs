@@ -145,7 +145,8 @@ const H = BOX.height * SCALE;
 // implicitly relative to the primary display's top-left and the box could only
 // ever land there. A display left of the primary one has a NEGATIVE x, which is
 // also why the clamp below is to the display's own origin rather than to zero.
-const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+const cursor = screen.getCursorScreenPoint();
+const area = screen.getDisplayNearestPoint(cursor).workArea;
 
 // Dead centre is the game-accurate placement, but it lands on top of whatever
 // you are working on. WEIRD_ROUTE_POS moves it out of the way.
@@ -155,11 +156,20 @@ const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workAr
 // against the left and top edges only, so a corner placement at a high cascade
 // slot slid off to the RIGHT — onto the neighbouring monitor, the same visible
 // symptom as the workAreaSize bug it followed.
+//
+// The cursor is passed through as well, and does more work than picking the
+// display. Several physical panels can be stitched into ONE logical display —
+// NVIDIA Surround, AMD Eyefinity, some KVMs — and then getDisplayNearestPoint
+// has nothing to choose between: two 1920x1080 panels arrive as a single
+// 3840x1080 workArea, `display count: 1`. Centring that spans the bezel, which
+// put 445 px of the box on one screen and 446 on the other. placeWindow splits
+// the desktop back into panels and uses cursor x to pick one.
 const { x, y } = placeWindow({
   area,
   size: { w: W, h: H },
   pos: process.env.WEIRD_ROUTE_POS,
   seed: process.pid,
+  cursor,
 });
 
 const win = new BrowserWindow({
